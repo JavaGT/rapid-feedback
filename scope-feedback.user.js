@@ -14,6 +14,8 @@
 (function() {
   'use strict';
 
+  var VERSION = '2.4';
+  var UPDATE_URL = 'https://gist.githubusercontent.com/JavaGT/3cee0b3d6dae324935435ed7e5e9a6c8/raw/scope-feedback.user.js';
   var STORAGE_KEY = 'scope_feedback_annotations';
   var TEXT_MAX = 150;
   var PANEL_WIDTH = 380;
@@ -306,7 +308,10 @@
     panel.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:' + primary + ';color:white;flex-shrink:0;">' +
       '<span style="font-size:15px;font-weight:700;">Rapid Feedback</span>' +
+      '<div style="display:flex;align-items:center;gap:8px;">' +
+      '<span id="scope-feedback-update" style="font-size:10px;cursor:pointer;opacity:0.7;text-decoration:underline;" title="Check for updates">v' + VERSION + '</span>' +
       '<button id="scope-feedback-close" style="background:none;border:none;color:white;cursor:pointer;font-size:22px;line-height:1;padding:0;font-family:inherit;">\u00d7</button>' +
+      '</div>' +
       '</div>' +
       '<div style="padding:8px 16px;display:flex;gap:8px;border-bottom:1px solid ' + border + ';background:' + surface + ';flex-shrink:0;">' +
       '<button id="scope-feedback-export" style="flex:1;padding:6px 10px;border:1px solid ' + primary + ';background:' + primary + ';color:white;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">Copy Markdown</button>' +
@@ -325,6 +330,7 @@
     panel.querySelector('#scope-feedback-close').addEventListener('click', closePanel);
     panel.querySelector('#scope-feedback-export').addEventListener('click', exportMarkdown);
     panel.querySelector('#scope-feedback-cut').addEventListener('click', cutMarkdown);
+    panel.querySelector('#scope-feedback-update').addEventListener('click', checkUpdate);
 
     var generalText = panel.querySelector('#scope-feedback-general');
     var generalBtn = panel.querySelector('#scope-feedback-general-submit');
@@ -481,6 +487,26 @@
     save();
     renderPanel();
     showToast('Cut — annotations cleared.');
+  }
+
+  function checkUpdate() {
+    var el = panel && panel.querySelector('#scope-feedback-update');
+    if (el) { el.textContent = 'checking\u2026'; el.style.opacity = '0.5'; el.style.cursor = 'default'; }
+    fetch(UPDATE_URL, { cache: 'no-cache' }).then(function(r) { return r.text(); }).then(function(body) {
+      var m = body.match(/@version\s+(\S+)/);
+      var latest = m ? m[1] : null;
+      if (!latest) { showToast('Could not read version from gist.'); return; }
+      if (latest === VERSION) {
+        showToast('v' + VERSION + ' is up to date.');
+        if (el) { el.textContent = 'v' + VERSION + ' \u2713'; el.style.opacity = '0.5'; el.style.cursor = 'default'; }
+      } else {
+        showToast('Update available: v' + latest + ' (yours: v' + VERSION + '). Open Tampermonkey to update.');
+        if (el) { el.textContent = 'v' + VERSION + ' \u2191 v' + latest; el.style.opacity = '1'; el.style.cursor = 'pointer'; }
+      }
+    }).catch(function() {
+      showToast('Update check failed.');
+      if (el) { el.textContent = 'v' + VERSION + ' \u2717'; el.style.opacity = '0.5'; }
+    });
   }
 
   function createFab() {
