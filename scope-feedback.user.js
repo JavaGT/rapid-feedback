@@ -59,7 +59,27 @@
     : 'Rapid Feedback — Alt+Ctrl+click any element to add a note';
 
   function v(name, fallback) {
-    try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch(_) { return fallback; }
+    try {
+      var val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      if (val) return val;
+    } catch(_) {}
+    if (fallback !== undefined) return fallback;
+    try {
+      var body = getComputedStyle(document.body);
+      var map = {
+        '--bg': 'background-color',
+        '--text': 'color',
+        '--border': 'border-color',
+        '--text-muted': 'color',
+        '--primary': 'color',
+      };
+      var key = map[name];
+      if (key) {
+        var c = body.getPropertyValue(key) || body[key];
+        if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') return c;
+      }
+    } catch(_) {}
+    return fallback;
   }
 
   function load() {
@@ -164,7 +184,7 @@
     t.textContent = msg;
     var s = t.style;
     s.position = 'fixed'; s.bottom = '24px'; s.left = '50%'; s.transform = 'translateX(-50%)';
-    s.background = v('--text', '#333'); s.color = v('--bg', 'white'); s.padding = '10px 20px'; s.borderRadius = '6px';
+    s.background = v('--text', '#1c1917'); s.color = v('--bg', '#fafaf9'); s.padding = '10px 20px'; s.borderRadius = '6px';
     s.fontSize = '13px'; s.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
     s.zIndex = 20000; s.boxShadow = '0 2px 10px rgba(0,0,0,0.2)'; s.pointerEvents = 'none';
     document.body.appendChild(t);
@@ -194,13 +214,13 @@
 
   function showPopover(el, elementData) {
     hidePopover();
-    var surface = v('--surface', 'white');
-    var text = v('--text', '#333');
-    var border = v('--border', '#e0e0e0');
-    var textMuted = v('--text-muted', '#777');
-    var textMutedLight = v('--text-muted-light', '#999');
-    var primary = v('--primary', '#0056b3');
-    var bg = v('--bg', '#f4f4f9');
+    var surface = v('--surface', '#ffffff');
+    var text = v('--text', '#1c1917');
+    var border = v('--border', '#d4d4d4');
+    var textMuted = v('--text-muted', '#57534e');
+    var textMutedLight = v('--text-muted-light', '#a8a29e');
+    var primary = v('--primary', '#78716c');
+    var bg = v('--bg', '#fafaf9');
     var submitDisabled = !storageAvailable;
     var submitStyle = submitDisabled
       ? 'opacity:0.45;cursor:not-allowed;'
@@ -265,14 +285,14 @@
 
   function renderPanel() {
     if (!panel) return;
-    var surface = v('--surface', 'white');
-    var text = v('--text', '#333');
-    var textMuted = v('--text-muted', '#777');
-    var textMutedLight = v('--text-muted-light', '#999');
-    var border = v('--border', '#e0e0e0');
-    var primary = v('--primary', '#0056b3');
-    var bg = v('--bg', '#f4f4f9');
-    var primaryLight = v('--primary-light', '#f0f4ff');
+    var surface = v('--surface', '#ffffff');
+    var text = v('--text', '#1c1917');
+    var textMuted = v('--text-muted', '#57534e');
+    var textMutedLight = v('--text-muted-light', '#a8a29e');
+    var border = v('--border', '#d4d4d4');
+    var primary = v('--primary', '#78716c');
+    var bg = v('--bg', '#fafaf9');
+    var primaryLight = v('--primary-light', 'rgba(120,113,108,0.1)');
 
     var emptyHint = 'No annotations yet. ' + chordHintShort + ' any element to add feedback.';
 
@@ -420,10 +440,10 @@
     panelOpen = true;
     _clearConfirming = false;
 
-    var surface = v('--surface', 'white');
-    var bg = v('--bg', '#f4f4f9');
-    var text = v('--text', '#333');
-    var border = v('--border', '#e0e0e0');
+    var surface = v('--surface', '#ffffff');
+    var bg = v('--bg', '#fafaf9');
+    var text = v('--text', '#1c1917');
+    var border = v('--border', '#d4d4d4');
 
     panel = document.createElement('div');
     var s = panel.style;
@@ -513,7 +533,7 @@
 
   function createFab() {
     if (fab) return;
-    var primary = v('--primary', '#0056b3');
+    var primary = v('--primary', '#78716c');
     fab = document.createElement('div');
     fab.textContent = '\u270f';
     fab.title = chordHintFab;
@@ -561,7 +581,7 @@
   var shimmerSheet = null;
   function ensureShimmerStyle() {
     if (shimmerSheet) return;
-    var primary = v('--primary', '#0056b3');
+    var primary = v('--primary', '#78716c');
     var style = document.createElement('style');
     style.textContent =
       '@keyframes scope-feedback-shimmer {' +
