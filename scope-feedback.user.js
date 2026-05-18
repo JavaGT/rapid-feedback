@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      2.4
+// @version      2.5
 // @description  Hold Alt+⌘ and click (Mac) or Alt+Ctrl+click (Windows/Linux) any element to annotate it for AI tools. Exports as markdown. Tampermonkey: set @match for sites you use, or keep the default broad match.
 // @author       You
 // @match        *://*/*
@@ -14,7 +14,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.4';
+  var VERSION = '2.5';
   var UPDATE_URL = 'https://gist.githubusercontent.com/JavaGT/3cee0b3d6dae324935435ed7e5e9a6c8/raw/scope-feedback.user.js';
   var STORAGE_KEY = 'scope_feedback_annotations';
   var TEXT_MAX = 150;
