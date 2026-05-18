@@ -269,6 +269,7 @@
       annotations.push(elementData);
       save();
       hidePopover();
+      if (panel) renderPanel();
       showToast('Annotation saved.');
       triggerShimmer();
     }
