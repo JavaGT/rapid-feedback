@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      2.5
+// @version      2.6
 // @description  Hold Alt+⌘ and click (Mac) or Alt+Ctrl+click (Windows/Linux) any element to annotate it for AI tools. Exports as markdown. Tampermonkey: set @match for sites you use, or keep the default broad match.
 // @author       You
 // @match        *://*/*
