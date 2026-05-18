@@ -556,8 +556,9 @@
     if (!isFeedbackChord(e)) return;
 
     if (e.target && e.target.closest && e.target.closest('#' + BANNER_ID)) return;
-    // Allow clicking on the extension's own UI (fab, panel, popover) so users
-    // can give feedback on the extension itself.
+    // Clicking the FAB should open the panel, not annotate it.
+    if (fab && (e.target === fab || fab.contains(e.target))) return;
+    // Allow chord-click on panel & popover to annotate the extension's own UI.
 
     e.preventDefault();
     e.stopPropagation();
