@@ -14,7 +14,7 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.5';
+  var VERSION = '2.6';
   var UPDATE_URL = 'https://gist.githubusercontent.com/JavaGT/3cee0b3d6dae324935435ed7e5e9a6c8/raw/scope-feedback.user.js';
   var STORAGE_KEY = 'scope_feedback_annotations';
   var TEXT_MAX = 150;
