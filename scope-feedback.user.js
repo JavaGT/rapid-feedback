@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      2.6
+// @version      2.8
 // @description  Hold Alt+⌘ and click (Mac) or Alt+Ctrl+click (Windows/Linux) any element to annotate it for AI tools. Exports as markdown. Tampermonkey: set @match for sites you use, or keep the default broad match.
 // @author       You
 // @match        *://*/*
@@ -14,7 +14,10 @@
 (function() {
   'use strict';
 
-  var VERSION = '2.6';
+  // If the site hosts the feedback plugin, defer to it entirely.
+  if (window.__SCOPE_FEEDBACK_API__) return;
+
+  var VERSION = '2.8';
   var UPDATE_URL = 'https://gist.githubusercontent.com/JavaGT/3cee0b3d6dae324935435ed7e5e9a6c8/raw/scope-feedback.user.js';
   var STORAGE_KEY = 'scope_feedback_annotations';
   var TEXT_MAX = 150;
@@ -275,8 +278,11 @@
     }
 
     textarea.addEventListener('keydown', function(e) {
+      e.stopPropagation();
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitAnnotation(); }
     });
+    textarea.addEventListener('keyup', function(e) { e.stopPropagation(); });
+    textarea.addEventListener('keypress', function(e) { e.stopPropagation(); });
 
     popover.querySelector('#scope-feedback-submit').onclick = submitAnnotation;
     popover.querySelector('#scope-feedback-cancel').onclick = hidePopover;
@@ -369,8 +375,11 @@
     }
     generalBtn.addEventListener('click', submitGeneral);
     generalText.addEventListener('keydown', function(e) {
+      e.stopPropagation();
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); submitGeneral(); }
     });
+    generalText.addEventListener('keyup', function(e) { e.stopPropagation(); });
+    generalText.addEventListener('keypress', function(e) { e.stopPropagation(); });
 
     panel.querySelectorAll('.sf-edit').forEach(function(btn) {
       btn.addEventListener('click', function() {
