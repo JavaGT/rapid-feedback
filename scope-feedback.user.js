@@ -97,6 +97,10 @@
   function describeElement(el) {
     var chain = [];
     var current = el;
+    // Descend into Shadow DOM if the target is a custom element host
+    if (current.shadowRoot && current.shadowRoot.firstChild) {
+      current = current.shadowRoot.firstChild;
+    }
     while (current && current !== document.body && current !== document.documentElement) {
       var tag = current.tagName.toLowerCase();
       var parts = [tag];
@@ -127,7 +131,7 @@
 
       chain.push(parts.join(''));
 
-      var parent = current.parentElement;
+      var parent = current.parentElement || current.parentNode;
       if (!parent && current.getRootNode) {
         var root = current.getRootNode();
         if (root && root.host) parent = root.host;
