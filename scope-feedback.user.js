@@ -244,6 +244,7 @@
       '<textarea id="sf-ta" placeholder="What should change?" style="width:100%;min-height:60px;padding:8px;border:1px solid ' + C.border + ';border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box;background:' + C.bg + ';color:' + C.text + ';"></textarea>' +
       '<div style="display:flex;gap:6px;margin-top:6px;justify-content:flex-end;">' +
       '<button id="sf-cancel" style="padding:5px 12px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">Cancel</button>' +
+      '<button id="sf-cut" style="padding:5px 12px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">Cut</button>' +
       '<button id="sf-submit" style="padding:5px 12px;border:1px solid ' + C.primary + ';border-radius:4px;background:' + C.primary + ';color:#fff;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;">Submit</button></div>';
 
     var s = popover.style;
@@ -294,6 +295,12 @@
 
     popover.querySelector('#sf-submit').onclick = submit;
     popover.querySelector('#sf-cancel').onclick = hidePopover;
+    popover.querySelector('#sf-cut').onclick = function() {
+      var comment = ta.value.trim();
+      data.comment = comment || '(no comment)';
+      copyFeedback([data]);
+      hidePopover();
+    };
   }
 
   function hidePopover() { if (popover) { popover.remove(); popover = null; } }
