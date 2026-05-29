@@ -17,10 +17,11 @@
 
   // --- shared core (mirrors public/lib/feedback-core.js) ---
   var CATEGORIES = [
-    { id: 'bug', label: 'Bug' },
-    { id: 'feature', label: 'Feature' },
-    { id: 'suggestion', label: 'Suggestion' },
-    { id: 'question', label: 'Question' },
+    { id: 'general', label: 'General' },
+  { id: 'bug', label: 'Bug' },
+  { id: 'feature', label: 'Feature' },
+  { id: 'suggestion', label: 'Suggestion' },
+  { id: 'question', label: 'Question' },
   ];
   var STYLE_PROPS = ['display','position','flex-direction','align-items','justify-content','color','background','background-color','font-size','font-weight','font-family','line-height','text-align','padding','margin','gap','width','height','border','border-radius','box-shadow','overflow','opacity','cursor','z-index'];
   var TEXT_MAX = 150;
@@ -107,7 +108,7 @@
   var annotations = [], panelOpen = false, panel = null, fab = null, popover = null;
   var _clearConfirm = false, _fabRevealed = false;
   var _modKeys = { meta: false, alt: false, ctrl: false };
-  var _category = 'bug';
+  var _category = 'general';
 
   // --- UI ---
   function showToast(msg) {
@@ -139,7 +140,7 @@
     var cats = '';
     for (var ci = 0; ci < CATEGORIES.length; ci++) {
       var c = CATEGORIES[ci];
-      cats += '<button class="sf-cat" data-id="' + c.id + '" style="padding:3px 8px;border:1px solid ' + (c.id==='bug'?'#555':'#ddd') + ';border-radius:4px;background:' + (c.id==='bug'?'#f0f0f0':'#fff') + ';color:' + (c.id==='bug'?'#333':'#666') + ';cursor:pointer;font-size:11px;font-family:inherit;">' + c.label + '</button>';
+      cats += '<button class="sf-cat" data-id="' + c.id + '" style="padding:3px 8px;border:1px solid ' + (c.id==='general'?'#555':'#ddd') + ';border-radius:4px;background:' + (c.id==='general'?'#f0f0f0':'#fff') + ';color:' + (c.id==='general'?'#333':'#666') + ';cursor:pointer;font-size:11px;font-family:inherit;">' + c.label + '</button>';
     }
 
     popover.innerHTML =
@@ -170,7 +171,7 @@
     var ta = popover.querySelector('#sf-ta');
     ta.focus();
 
-    var selectedCat = 'bug';
+    var selectedCat = 'general';
     var catBtns = popover.querySelectorAll('.sf-cat');
     for (var cj = 0; cj < catBtns.length; cj++) {
       catBtns[cj].addEventListener('click', function() {
@@ -211,7 +212,7 @@
     for (var i = 0; i < annotations.length; i++) {
       var a = annotations[i], target = a.selector.split(' > ')[0] || a.selector;
       var catLabel = '';
-      for (var ci = 0; ci < CATEGORIES.length; ci++) { if (CATEGORIES[ci].id === (a.category||'bug')) catLabel = CATEGORIES[ci].label; }
+      for (var ci = 0; ci < CATEGORIES.length; ci++) { if (CATEGORIES[ci].id === (a.category||'general')) catLabel = CATEGORIES[ci].label; }
       listHtml += '<div style="background:#fff;border:1px solid #eee;border-radius:6px;padding:12px;margin-bottom:8px;" data-idx="' + i + '">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
         '<div style="flex:1;min-width:0;">' +
@@ -245,7 +246,7 @@
         var h = '';
         for (var ci2 = 0; ci2 < CATEGORIES.length; ci2++) {
           var c2 = CATEGORIES[ci2];
-          h += '<button class="sf-ftcat" data-id="' + c2.id + '" style="padding:3px 8px;border:1px solid ' + (c2.id==='bug'?'#555':'#ddd') + ';border-radius:4px;background:' + (c2.id==='bug'?'#f0f0f0':'#fff') + ';color:' + (c2.id==='bug'?'#333':'#666') + ';cursor:pointer;font-size:11px;font-family:inherit;">' + c2.label + '</button>';
+          h += '<button class="sf-ftcat" data-id="' + c2.id + '" style="padding:3px 8px;border:1px solid ' + (c2.id==='general'?'#555':'#ddd') + ';border-radius:4px;background:' + (c2.id==='general'?'#f0f0f0':'#fff') + ';color:' + (c2.id==='general'?'#333':'#666') + ';cursor:pointer;font-size:11px;font-family:inherit;">' + c2.label + '</button>';
         }
         return h;
       })() +
