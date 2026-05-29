@@ -110,49 +110,47 @@
   installConsoleCapture();
 
   function toMarkdown(items) {
-    var parts = ['# Feedback Report\n'];
+    var lines = [];
     for (var i = 0; i < items.length; i++) {
-      var a = items[i], label = a.selector ? a.selector.split(' > ')[0] : 'Feedback ' + (i+1);
-      var cat = a.category ? a.category.charAt(0).toUpperCase() + a.category.slice(1) : 'General';
-      parts.push('## ' + (i+1) + '. [' + cat + '] ' + label + '\n');
-      parts.push('### Request\n' + (a.comment || '') + '\n');
-      parts.push('### Element\n- **Tag**: `' + (a.tag || 'unknown') + '`\n');
-      if (a.selector) parts.push('- **Selector**: `' + a.selector + '`\n');
-      if (a.text) parts.push('- **Text**: "' + a.text + '"\n');
-      if (a.rect) parts.push('- **Position**: x=' + a.rect.x + ', y=' + a.rect.y + ', ' + a.rect.width + '\u00d7' + a.rect.height + ' (viewport)\n');
+      var a = items[i], sel = a.selector ? a.selector.split(' > ')[0] : '';
+      var cat = (a.category || 'general').toUpperCase();
+      lines.push('## ' + (i+1) + '. [' + cat + '] ' + sel);
+      lines.push(a.comment || '');
+      var details = [];
+      if (a.selector) details.push(a.selector);
+      if (a.rect) details.push(a.rect.width + '\u00d7' + a.rect.height + ' @ ' + a.rect.x + ',' + a.rect.y);
       if (a.styles && Object.keys(a.styles).length) {
-        var styleLines = Object.entries(a.styles).map(function(e){return '  - **`' + e[0] + '`**: ' + e[1]}).join('\n');
-        parts.push('### Styles (relevant)\n' + styleLines + '\n');
+        var s = Object.entries(a.styles).slice(0, 6).map(function(e){return e[0]+'='+e[1]}).join(' ');
+        if (s) details.push(s);
       }
+      if (details.length) lines.push(details.join(' | '));
       if (a.console && a.console.length) {
-        parts.push('### Console Output\n');
-        for (var ci = 0; ci < a.console.length; ci++) {
-          parts.push('- [' + a.console[ci].level + '] ' + a.console[ci].m + '\n');
+        for (var ci = 0; ci < Math.min(a.console.length, 2); ci++) {
+          if (a.console[ci].level === 'error') lines.push('ERR: ' + a.console[ci].m.substring(0, 200));
         }
       }
-      parts.push('### Page\n- **Title**: ' + document.title + '\n- **URL**: ' + a.url + '\n');
-      parts.push('\n---\n');
+      lines.push(document.title + ' | ' + a.url);
+      if (i < items.length - 1) lines.push('');
     }
-    return parts.join('');
+    return lines.join('\n');
   }
 
   function toFeedbackJSON(items) {
     return items.map(function(a) {
       return {
-        type: 'feedback', category: a.category || 'general', request: a.comment,
-        element: a.selector ? {
-          tag: a.tag || null, selector: a.selector, text: a.text || null,
-          rect: a.rect || null, styles: a.styles || null,
-        } : null,
-        page: { url: a.url, title: document.title },
+        c: a.category || 'general', r: a.comment,
+        el: a.selector ? { s: a.selector, t: a.tag || null, x: a.text || null, p: a.rect || null, y: a.styles || null } : null,
+        pg: a.url, co: a.console ? a.console.slice(-3).map(function(e){return {l:e.level,m:e.m.substring(0,300)}}) : undefined,
       };
     });
   }
 
   function copyFeedback(items) {
-    var md = toMarkdown(items);
-    var json = JSON.stringify(toFeedbackJSON(items), null, 2);
-    copyText(md + '\n\n```json\n' + json + '\n```\n');
+    copyText(toMarkdown(items));
+  }
+
+  function copyFeedbackJSON(items) {
+    copyText(JSON.stringify(toFeedbackJSON(items)));
   }
 
   // --- storage ---
@@ -332,7 +330,8 @@
       '<span style="font-size:11px;color:' + C.muted + ';font-weight:500;">' + annotations.length + '</span>' +
       '<button id="sf-close" style="background:none;border:none;color:' + C.muted + ';cursor:pointer;font-size:20px;padding:2px 4px;border-radius:4px;font-family:inherit;">\u00d7</button></div>' +
       '<div style="padding:8px 16px;display:flex;gap:6px;border-bottom:1px solid ' + C.border + ';flex-shrink:0;flex-wrap:wrap;">' +
-      '<button id="sf-export" style="flex:1;padding:5px 10px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">Copy</button>' +
+      '<button id="sf-export" style="padding:5px 10px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">Copy</button>' +
+      '<button id="sf-export-json" style="padding:5px 10px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">JSON</button>' +
       '<button id="sf-clear" style="padding:5px 10px;border:1px solid ' + C.border + ';border-radius:4px;background:' + C.bg + ';cursor:pointer;font-size:12px;font-family:inherit;color:' + C.text + ';">Clear</button></div>' +
       '<div id="sf-list" style="flex:1;overflow-y:auto;padding:8px 12px;">' + listHtml + '</div>' +
       '<div style="padding:10px 12px;border-top:1px solid ' + C.border + ';flex-shrink:0;">' +
@@ -353,6 +352,7 @@
 
     panel.querySelector('#sf-close').addEventListener('click', closePanel);
     panel.querySelector('#sf-export').addEventListener('click', function(){ if (annotations.length) copyFeedback(annotations); else showToast('Nothing to export'); });
+    panel.querySelector('#sf-export-json').addEventListener('click', function(){ if (annotations.length) copyFeedbackJSON(annotations); else showToast('Nothing to export'); });
     panel.querySelector('#sf-clear').addEventListener('click', clearAll);
 
     // footer category toggle
