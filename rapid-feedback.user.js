@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.2
+// @version      5.3
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Grouping, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
 // @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
 // @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
 // @author       You
@@ -15,10 +16,15 @@
 
 (function () {
 	'use strict';
-	if (window.__SCOPE_FEEDBACK_API__) return;
-	window.__SCOPE_FEEDBACK_API__ = true;
+	// Guard with a dedicated flag so a re-injection during init can't mistake the
+	// half-built API object for a finished one.
+	if (window.__SCOPE_FEEDBACK_LOADED__) return;
+	window.__SCOPE_FEEDBACK_LOADED__ = true;
 
-	const IS_MAC = /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') || navigator.userAgentData?.platform === 'macOS';
+	const UA_PLATFORM = navigator.userAgentData?.platform;
+	const IS_MAC = UA_PLATFORM
+		? UA_PLATFORM === 'macOS'
+		: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '');
 	const CHORD_HINT = IS_MAC ? 'Alt+⌘+click' : 'Alt+Ctrl+click';
 	const IS_CHORD = (e) => e.altKey && (IS_MAC ? e.metaKey : e.ctrlKey);
 	const IS_SAVE_KEY = (e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter';
@@ -65,6 +71,8 @@
 	let targetEl = null;
 	let outlineEl = null;
 	let destPick = null;
+	let styleSnapshot = null;
+	let anchor = null;
 
 	// --- Utility-class detection ---
 	const UTILITY_CLASS_RE = /^(p|m)(t|r|b|l|x|y|s|e)?-\d+|^(w|h|min-w|min-h|max-w|max-h)-\d+|^(text|font|leading|tracking|rounded|border|bg|shadow|opacity|z|flex|grid|gap|items|justify|self|order|overflow|object|top|right|bottom|left|inset|ring|outline|decoration|underline|line-through|no-underline|uppercase|lowercase|capitalize|normal-case|truncate|italic|not-italic|font|antialiased|subpixel-antialiased|align|break|whitespace|list|sr-only|invisible|visible|static|fixed|absolute|relative|sticky|block|inline|flow-root|contents|hidden|isolate|float|clear|container|columns|aspect|basis|grow|shrink)/;
@@ -81,7 +89,9 @@
 	}
 
 	// --- Selector generation (v5 overhaul) ---
-	const HIGH_SIGNAL_ATTRS = ['id', 'aria-label', 'name', 'href'];
+	// `id` is deliberately absent: describeElement already emits it as `#id`, and
+	// repeating it as [id="…"] just doubles the length of every selector.
+	const HIGH_SIGNAL_ATTRS = ['aria-label', 'name', 'href'];
 
 	function collectAttrs(el) {
 		const out = [];
@@ -97,29 +107,39 @@
 		return out;
 	}
 
+	// Does `selector` resolve to exactly `el` and nothing else? Attribute values can
+	// contain characters that make the selector invalid, so failures are non-fatal.
+	function resolvesUniquely(selector, el) {
+		const root = el.getRootNode?.() || document;
+		const scope = root.querySelectorAll ? root : document;
+		try {
+			const found = scope.querySelectorAll(selector);
+			return found.length === 1 && found[0] === el;
+		} catch {
+			return false;
+		}
+	}
+
 	function describeElement(el) {
 		if (el.nodeType !== 1) return '';
 		const chain = [];
 		let cur = el;
-		let idSeen = false;
 		while (cur && cur.nodeType === 1 && cur !== document.body && cur !== document.documentElement) {
 			const parts = [cur.tagName.toLowerCase()];
-			if (cur.id) {
-				parts.push('#' + cur.id);
-				idSeen = true;
-			}
+			if (cur.id) parts.push('#' + cur.id);
 			if (typeof cur.className === 'string') {
 				const cls = filterClasses(cur.className);
 				if (cls.length) parts.push('.' + cls.join('.'));
 			}
 			const attrs = collectAttrs(cur);
 			if (attrs.length) parts.push('[' + attrs.join(' ') + ']');
-			chain.push(parts.join(''));
+			chain.unshift(parts.join(''));
+			// Walk up only as far as needed: stop as soon as the tail we've built
+			// already identifies the element unambiguously.
+			if (resolvesUniquely(chain.join(' > '), el)) break;
 			cur = parentOf(cur);
 		}
-		chain.reverse();
-		const max = chain.length <= 5 ? chain.length : (idSeen ? chain.length : Math.min(chain.length, 8));
-		return chain.slice(-Math.min(max, 12)).join(' > ');
+		return chain.slice(-12).join(' > ');
 	}
 
 	function parentOf(el) {
@@ -275,14 +295,26 @@
 		return stripped;
 	}
 
+	// Live element → short label (popover chrome).
 	function compactLabel(el) {
-		const tag = el.tagName.toLowerCase();
-		const id = el.id ? '#' + el.id : '';
-		const a11y = getA11y(el);
-		if (a11y?.name) return tag + id + ' "' + a11y.name.slice(0, 30) + '"';
-		const text = getTextSnippet(el);
-		if (text && text.length <= 30) return tag + id + ' "' + text + '"';
-		return tag + id;
+		return shortLabel(el.tagName.toLowerCase(), el.id, getA11y(el)?.name, getTextSnippet(el));
+	}
+
+	// Stored target/destination record → short label (exports). Same shape of output,
+	// but reads a plain object rather than a live node.
+	function compactRefLabel(t) {
+		const leaf = (t.selector || '').split(' > ').pop() || '';
+		const tag = t.tag || leaf.match(/^[a-z0-9-]+/i)?.[0] || 'element';
+		const idM = leaf.match(/#([\w-]+)/);
+		return shortLabel(tag, idM?.[1], t.a11y?.name, t.text);
+	}
+
+	function shortLabel(tag, id, name, text) {
+		const base = tag + (id ? '#' + id : '');
+		if (name) return base + ' "' + name.slice(0, 30) + '"';
+		const t = (text || '').trim().replace(/\s+/g, ' ');
+		if (t && t.length <= 30) return base + ' "' + t + '"';
+		return base;
 	}
 
 	function extractHints(a) {
@@ -361,7 +393,7 @@
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
 			}
 			if (a.targets && a.targets.length) {
-				lines.push('Group: ' + a.targets.map(t => compactLabel(t)).join(', '));
+				lines.push('Group: ' + a.targets.map(t => compactRefLabel(t)).join(', '));
 			}
 			if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
 				lines.push('Tweak:');
@@ -399,11 +431,13 @@
 				adjustedStyles: a.adjustedStyles || null,
 				destination: a.destination ? {
 					selector: a.destination.selector,
+					text: a.destination.text || null,
 					a11y: a.destination.a11y,
 					where: compactAncestorChain(a.destination.selector, 4)
 				} : null,
 				targets: a.targets ? a.targets.map(t => ({
 					selector: t.selector,
+					text: t.text || null,
 					a11y: t.a11y
 				})) : null,
 				hints: extractHints(a)
@@ -493,7 +527,8 @@
 .rf-styles-grid input[type=range]{padding:0;accent-color:#4a5568;height:16px}
 .rf-zoom-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px}
 .rf-zoom-row button{padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:13px;color:#2d3748}
-.rf-zoom-tag{font-family:monospace;font-size:10px;color:#718096;flex:1}
+.rf-zoom-tag{font-family:monospace;font-size:10px;color:#718096;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-group-list{font-size:10px;color:#718096;margin-bottom:8px;font-family:monospace;max-height:44px;overflow:hidden}
 .rf-title{font-weight:600;font-size:12px;color:#2d3748;margin-bottom:2px}
 .rf-sub{font-size:9px;color:#718096;margin-bottom:4px;font-family:monospace;word-break:break-all;max-height:40px;overflow:hidden}
 .rf-source{font-size:10px;color:#2f855a;margin-bottom:4px;font-family:monospace;word-break:break-all}
@@ -591,6 +626,37 @@
 		return { top: clamp(bestY, pad, innerHeight - popoverH - pad), left: clamp(r.left, pad, innerWidth - popoverW - pad) };
 	}
 
+	// The popover and outline are position:fixed, so a scroll or layout shift slides
+	// them off their target. Re-project both against the live rect once per frame
+	// while the popover is open.
+	function startAnchor(host, getTarget) {
+		stopAnchor();
+		anchor = { host, getTarget, raf: 0, last: '' };
+		const tick = () => {
+			if (!anchor) return;
+			const el = anchor.getTarget();
+			if (el && el.isConnected) {
+				const r = el.getBoundingClientRect();
+				const key = r.top + ':' + r.left + ':' + r.width + ':' + r.height + ':' + innerWidth + ':' + innerHeight;
+				if (key !== anchor.last) {
+					anchor.last = key;
+					const h = anchor.host.firstElementChild?.offsetHeight
+						|| anchor.host.shadowRoot?.querySelector('.rf-popover')?.offsetHeight || 480;
+					const pos = placePopover(r, POPOVER_W, h);
+					anchor.host.style.top = pos.top + 'px';
+					anchor.host.style.left = pos.left + 'px';
+					if (outlineEl) positionOutline(el);
+				}
+			}
+			anchor.raf = requestAnimationFrame(tick);
+		};
+		anchor.raf = requestAnimationFrame(tick);
+	}
+
+	function stopAnchor() {
+		if (anchor) { cancelAnimationFrame(anchor.raf); anchor = null; }
+	}
+
 	function clamp(v, min, max) { return Math.max(min, Math.min(v, max)); }
 
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
@@ -609,67 +675,109 @@
 		const adjustedStyles = { ...(initial?.adjustedStyles || {}) };
 		let activeTab = 'comment';
 		let zoomTarget = el;
+		// curData tracks whichever element the popover currently describes, so the
+		// header, the style defaults and the saved annotation never disagree.
+		let curData = data;
+		const isGroup = !!(data.targets && data.targets.length);
+		// Assigned once the styles grid exists; zooming re-seeds it.
+		let refreshStyleInputs = () => {};
 
-		// Title + source
+		// Title + source + selector + text
 		const titleEl = document.createElement('div');
 		titleEl.className = 'rf-title';
-		titleEl.textContent = targetLabel({ ...data, comment: '' });
-
+		const sourceEl = document.createElement('div');
+		sourceEl.className = 'rf-source';
 		const selEl = document.createElement('div');
 		selEl.className = 'rf-sub';
-		selEl.textContent = compactAncestorChain(data.selector) || data.selector;
+		const quoteEl = document.createElement('div');
+		quoteEl.className = 'rf-quote';
 
 		popover.appendChild(titleEl);
-		if (data.source?.ref) {
-			const s = document.createElement('div');
-			s.className = 'rf-source';
-			s.textContent = '\u25CE ' + data.source.ref + (data.source.viaAncestor ? ' (ancestor)' : '');
-			popover.appendChild(s);
-		}
+		popover.appendChild(sourceEl);
 		popover.appendChild(selEl);
-		if (data.text) {
-			const q = document.createElement('div');
-			q.className = 'rf-quote';
-			q.textContent = '\u201c' + data.text + '\u201d';
-			popover.appendChild(q);
+		popover.appendChild(quoteEl);
+
+		function renderHeader() {
+			titleEl.textContent = isGroup
+				? 'Group (' + (data.targets.length + 1) + ' elements)'
+				: targetLabel({ ...curData, comment: '' });
+			if (curData.source?.ref) {
+				sourceEl.style.display = 'block';
+				sourceEl.textContent = '\u25CE ' + curData.source.ref + (curData.source.viaAncestor ? ' (ancestor)' : '');
+			} else {
+				sourceEl.style.display = 'none';
+			}
+			selEl.textContent = compactAncestorChain(curData.selector) || curData.selector;
+			if (curData.text) {
+				quoteEl.style.display = 'block';
+				quoteEl.textContent = '\u201c' + curData.text + '\u201d';
+			} else {
+				quoteEl.style.display = 'none';
+			}
+		}
+		renderHeader();
+
+		// Group member list
+		if (isGroup) {
+			const listEl = document.createElement('div');
+			listEl.className = 'rf-group-list';
+			listEl.textContent = 'with: ' + data.targets.map(t => compactRefLabel(t)).join(', ');
+			popover.appendChild(listEl);
 		}
 
-		// Zoom row
+		// Zoom row \u2014 walk the tree to retarget. Meaningless for a group, so hidden there.
 		const zoomRow = document.createElement('div');
 		zoomRow.className = 'rf-zoom-row';
 		const upBtn = document.createElement('button');
 		upBtn.textContent = '\u25B2';
+		upBtn.title = 'Parent';
 		const downBtn = document.createElement('button');
 		downBtn.textContent = '\u25BC';
+		downBtn.title = 'First child';
+		const prevBtn = document.createElement('button');
+		prevBtn.textContent = '\u25C0';
+		prevBtn.title = 'Previous sibling';
+		const nextBtn = document.createElement('button');
+		nextBtn.textContent = '\u25B6';
+		nextBtn.title = 'Next sibling';
 		const zoomTag = document.createElement('span');
 		zoomTag.className = 'rf-zoom-tag';
 		zoomTag.textContent = compactLabel(zoomTarget);
+
+		// Retargeting resets style edits: they belong to the element they were made
+		// against, so we put that one back before moving on.
+		function setZoomTarget(next) {
+			if (!next || next === zoomTarget) return;
+			revertStyles();
+			for (const k in adjustedStyles) delete adjustedStyles[k];
+			zoomTarget = next;
+			targetEl = next;
+			styleSnapshot = {};
+			curData = capturableEl(next).data;
+			if (isGroup) curData.targets = data.targets;
+			zoomTag.textContent = compactLabel(zoomTarget);
+			renderHeader();
+			refreshStyleInputs();
+			showOutline(zoomTarget);
+			const r = zoomTarget.getBoundingClientRect();
+			const pos = placePopover(r, POPOVER_W, popover.offsetHeight || 480);
+			host.style.top = pos.top + 'px';
+			host.style.left = pos.left + 'px';
+		}
+
 		upBtn.addEventListener('click', () => {
-			if (zoomTarget.parentElement && zoomTarget.parentElement !== document.body && zoomTarget.parentElement !== document.documentElement) {
-				zoomTarget = zoomTarget.parentElement;
-				zoomTag.textContent = compactLabel(zoomTarget);
-				showOutline(zoomTarget);
-				const r = zoomTarget.getBoundingClientRect();
-				const pos = placePopover(r, POPOVER_W, 480);
-				host.style.top = pos.top + 'px';
-				host.style.left = pos.left + 'px';
-			}
+			const p = zoomTarget.parentElement;
+			if (p && p !== document.body && p !== document.documentElement) setZoomTarget(p);
 		});
-		downBtn.addEventListener('click', () => {
-			if (zoomTarget.firstElementChild) {
-				zoomTarget = zoomTarget.firstElementChild;
-				zoomTag.textContent = compactLabel(zoomTarget);
-				showOutline(zoomTarget);
-				const r = zoomTarget.getBoundingClientRect();
-				const pos = placePopover(r, POPOVER_W, 480);
-				host.style.top = pos.top + 'px';
-				host.style.left = pos.left + 'px';
-			}
-		});
+		downBtn.addEventListener('click', () => setZoomTarget(zoomTarget.firstElementChild));
+		prevBtn.addEventListener('click', () => setZoomTarget(zoomTarget.previousElementSibling));
+		nextBtn.addEventListener('click', () => setZoomTarget(zoomTarget.nextElementSibling));
 		zoomRow.appendChild(upBtn);
 		zoomRow.appendChild(downBtn);
+		zoomRow.appendChild(prevBtn);
+		zoomRow.appendChild(nextBtn);
 		zoomRow.appendChild(zoomTag);
-		popover.appendChild(zoomRow);
+		if (!isGroup) popover.appendChild(zoomRow);
 
 		// Tab row
 		const tabRow = document.createElement('div');
@@ -733,12 +841,15 @@
 		});
 		destBtn.addEventListener('click', () => {
 			// Snapshot the draft, close the popover, and enter destination-select mode.
-			enterDestPick(el, data, {
+			// Reopen against the zoomed element so retargeting isn't lost.
+			const draft = {
 				comment: ta.value,
 				category: selCat,
 				adjustedStyles: { ...adjustedStyles },
 				destination: destData,
-			});
+			};
+			revertStyles();
+			enterDestPick(zoomTarget, curData, draft);
 		});
 		destRow.appendChild(destBtn);
 		destRow.appendChild(destTag);
@@ -757,22 +868,19 @@
 			label.textContent = ap.label;
 			stylesGrid.appendChild(label);
 		}
+		// Keep each input paired with its property so seeding and resetting can't
+		// drift out of alignment.
+		const styleInputs = new Map();
 		for (const ap of ADJUSTABLE_PROPS) {
-			const currentVal = adjustedStyles[ap.key] || data.styles?.[ap.key] || '';
+			const inp = document.createElement('input');
 			if (ap.isRange) {
-				const v = parseFloat(currentVal);
-				const inp = document.createElement('input');
 				inp.type = 'range';
 				inp.min = ap.min;
 				inp.max = ap.max;
 				inp.step = ap.step;
-				inp.value = isNaN(v) ? 1 : v;
 				inp.addEventListener('input', () => applyStyle(ap.key, inp.value, adjustedStyles));
-				stylesGrid.appendChild(inp);
 			} else {
-				const inp = document.createElement('input');
 				inp.type = 'text';
-				inp.value = currentVal;
 				inp.placeholder = '\u2014';
 				inp.addEventListener('input', () => applyStyle(ap.key, inp.value.trim(), adjustedStyles));
 				inp.addEventListener('keydown', (e) => {
@@ -787,21 +895,35 @@
 					inp.value = num + unit;
 					applyStyle(ap.key, inp.value.trim(), adjustedStyles);
 				});
-				stylesGrid.appendChild(inp);
 			}
+			styleInputs.set(ap, inp);
+			stylesGrid.appendChild(inp);
 		}
+
+		// Seed inputs from the current element, preferring any pending edit.
+		refreshStyleInputs = () => {
+			for (const [ap, inp] of styleInputs) {
+				const val = adjustedStyles[ap.key] || curData.styles?.[ap.key] || '';
+				if (ap.isRange) {
+					const v = parseFloat(val);
+					inp.value = isNaN(v) ? 1 : v;
+				} else {
+					inp.value = val;
+				}
+			}
+		};
+		refreshStyleInputs();
+
 		stylesBody.appendChild(stylesGrid);
 		const resetBtn = document.createElement('button');
 		resetBtn.className = 'rf-btn rf-btn-sm';
 		resetBtn.textContent = 'Reset';
 		resetBtn.style.cssText = 'margin-top:6px';
 		resetBtn.addEventListener('click', () => {
-			for (const k in adjustedStyles) { targetEl.style[k] = ''; delete adjustedStyles[k]; }
-			stylesGrid.querySelectorAll('input').forEach(inp => {
-				const prop = ADJUSTABLE_PROPS.find(ap => ap.key && inp.type !== 'range') || {};
-				const def = data.styles?.[prop.key || ''] || '';
-				inp.value = def;
-			});
+			revertStyles();
+			styleSnapshot = {};
+			for (const k in adjustedStyles) delete adjustedStyles[k];
+			refreshStyleInputs();
 			showToast('Styles reset');
 		});
 		stylesBody.appendChild(resetBtn);
@@ -831,24 +953,16 @@
 					: Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n');
 			}
 			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+			// curData already tracks the zoom target, so no re-resolve needed.
 			const annotationData = {
-				...data,
+				...curData,
 				comment,
 				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
 				destination: destData,
 			};
-			// Re-resolve via zoom target
-			if (zoomTarget !== el) {
-				annotationData.selector = describeElement(zoomTarget);
-				annotationData.tag = zoomTarget.tagName.toLowerCase();
-				annotationData.text = getTextSnippet(zoomTarget);
-				annotationData.styles = getComputedStyles(zoomTarget);
-				annotationData.rect = getBoundingRect(zoomTarget);
-				annotationData.source = getSourceLoc(zoomTarget);
-				annotationData.a11y = getA11y(zoomTarget);
-			}
 			persist(() => { annotations.push(makeAnnotation(annotationData)); });
+			keepStyles();
 			hidePopover();
 			showToast('Saved');
 		}
@@ -865,8 +979,9 @@
 		cutBtn.addEventListener('click', () => {
 			const comment = ta.value.trim() || '(no comment)';
 			const ann = makeAnnotation({
-				...data,
+				...curData,
 				comment,
+				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
 				destination: destData,
 			});
@@ -892,126 +1007,68 @@
 		document.body.appendChild(host);
 
 		const rect = el.getBoundingClientRect();
-		const pos = placePopover(rect, POPOVER_W, 480);
+		const pos = placePopover(rect, POPOVER_W, popover.offsetHeight || 480);
 		host.style.position = 'fixed';
 		host.style.top = pos.top + 'px';
 		host.style.left = pos.left + 'px';
 
 		popoverEl = host;
 		popoverRoot = root;
+		styleSnapshot = {};
+		// Re-apply any style edits carried back from destination-select mode.
+		for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
+		startAnchor(host, () => zoomTarget);
 		ta.focus();
 	}
 
+	// A group is just the multi-target case of an annotation, so it reuses the same
+	// popover — which gets it styles, destination and Cut for free.
 	function showGroupPopover(targets) {
-		hidePopover();
 		if (!targets || targets.length < 2) return;
 		const primary = targets[0];
-		const data = {
-			selector: describeElement(primary),
-			tag: primary.tagName.toLowerCase(),
-			text: getTextSnippet(primary),
-			styles: getComputedStyles(primary),
-			rect: getBoundingRect(primary),
-			source: getSourceLoc(primary),
-			a11y: getA11y(primary),
-			targets: targets.slice(1).map(t => ({
-				selector: describeElement(t),
-				a11y: getA11y(t)
-			}))
-		};
-		targetEl = primary;
+		const data = capturableEl(primary).data;
+		data.targets = targets.slice(1).map(t => ({
+			selector: describeElement(t),
+			text: getTextSnippet(t),
+			a11y: getA11y(t)
+		}));
+		showPopover(primary, data);
+	}
 
-		const { host, root } = createShadowRoot();
-		host.style.cssText = 'all:initial;position:fixed;z-index:2147483644;pointer-events:none';
-		root.appendChild(shadowStyle());
-		const ps = document.createElement('style');
-		ps.textContent = popoverStyles();
-		root.appendChild(ps);
-
-		const popover = document.createElement('div');
-		popover.className = 'rf-popover';
-
-		const titleEl = document.createElement('div');
-		titleEl.className = 'rf-title';
-		titleEl.textContent = 'Group (' + targets.length + ' elements)';
-
-		const listEl = document.createElement('div');
-		listEl.style.cssText = 'font-size:10px;color:#718096;margin-bottom:8px;font-family:monospace';
-		listEl.textContent = targets.map(t => compactLabel(t)).join(', ');
-
-		popover.appendChild(titleEl);
-		popover.appendChild(listEl);
-
-		const ta = document.createElement('textarea');
-		ta.className = 'rf-popover-ta';
-		ta.placeholder = 'What should change?';
-		popover.appendChild(ta);
-
-		const catBar = document.createElement('div');
-		catBar.className = 'rf-cat-bar';
-		let selCat = activeCategory;
-		for (const c of CATEGORIES) {
-			const btn = document.createElement('button');
-			btn.className = 'rf-cat-btn' + (c.id === selCat ? ' active' : '');
-			btn.textContent = c.label;
-			btn.addEventListener('click', () => {
-				catBar.querySelectorAll('.rf-cat-btn').forEach(b => b.classList.remove('active'));
-				btn.classList.add('active');
-				selCat = c.id;
-			});
-			catBar.appendChild(btn);
+	// Live style edits mutate the page. Remember each property's original inline
+	// value the first time we touch it so we can put the page back if the user
+	// walks away without saving.
+	function applyStyle(prop, val, adjustedStyles) {
+		if (targetEl && styleSnapshot && !(prop in styleSnapshot)) {
+			styleSnapshot[prop] = targetEl.style.getPropertyValue(prop);
 		}
-		popover.appendChild(catBar);
+		if (!val) { delete adjustedStyles[prop]; if (targetEl) targetEl.style.removeProperty(prop); }
+		else { adjustedStyles[prop] = val; if (targetEl) targetEl.style.setProperty(prop, val); }
+	}
 
-		function submit() {
-			const comment = ta.value.trim();
-			if (!comment) { showToast('Please enter a comment'); return; }
-			persist(() => { annotations.push(makeAnnotation({ ...data, comment, category: selCat })); });
-			hidePopover();
-			showToast('Saved');
+	function revertStyles() {
+		if (!targetEl || !styleSnapshot) return;
+		for (const prop in styleSnapshot) {
+			const orig = styleSnapshot[prop];
+			if (orig) targetEl.style.setProperty(prop, orig);
+			else targetEl.style.removeProperty(prop);
 		}
+		styleSnapshot = null;
+	}
 
-		const actions = document.createElement('div');
-		actions.className = 'rf-actions';
-		const cancelBtn = document.createElement('button');
-		cancelBtn.className = 'rf-btn';
-		cancelBtn.textContent = 'Cancel';
-		cancelBtn.addEventListener('click', hidePopover);
-		const submitBtn = document.createElement('button');
-		submitBtn.className = 'rf-btn rf-btn-primary';
-		submitBtn.textContent = 'Submit';
-		submitBtn.addEventListener('click', submit);
-		actions.appendChild(cancelBtn);
-		actions.appendChild(submitBtn);
-		popover.appendChild(actions);
-
-		ta.addEventListener('keydown', (e) => {
-			e.stopPropagation();
-			if (IS_SAVE_KEY(e)) { e.preventDefault(); submit(); }
-		});
-
-		root.appendChild(popover);
-		document.body.appendChild(host);
-
-		const rect = primary.getBoundingClientRect();
-		const pos = placePopover(rect, POPOVER_W, 300);
-		host.style.top = pos.top + 'px';
-		host.style.left = pos.left + 'px';
-
-		popoverEl = host;
-		popoverRoot = root;
-		ta.focus();
+	// Keep the live edits on the page (used when the annotation is saved), so the
+	// user can keep looking at what they just described.
+	function keepStyles() {
+		styleSnapshot = null;
 	}
 
 	function hidePopover() {
+		revertStyles();
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		targetEl = null;
+		styleSnapshot = null;
 		hideOutline();
-	}
-
-	function applyStyle(prop, val, adjustedStyles) {
-		if (!val) { delete adjustedStyles[prop]; if (targetEl) targetEl.style[prop] = ''; }
-		else { adjustedStyles[prop] = val; if (targetEl) targetEl.style[prop] = val; }
+		stopAnchor();
 	}
 
 	// --- Panel (shadow DOM) ---
@@ -1254,6 +1311,11 @@
 			outlineEl.dataset.rfVariant = v;
 			outlineEl.style.cssText = OUTLINE_BASE + ';' + OUTLINE_VARIANTS[v];
 		}
+		positionOutline(el);
+	}
+
+	function positionOutline(el) {
+		if (!outlineEl) return;
 		const r = el.getBoundingClientRect();
 		outlineEl.style.top = r.top + 'px';
 		outlineEl.style.left = r.left + 'px';
@@ -1394,17 +1456,14 @@
 	function openChordAnnotation(e, hint) {
 		const target = resolveChordTarget(e, hint);
 		if (!target) return;
-		// Group mode: the chordGesture tracks accumulated targets
-		const accumulated = chordGesture?.accumulated || [];
-		if (accumulated.length >= 1) {
-			accumulated.push(target);
-			return; // keep accumulating — released on chord up
-		}
 		hidePopover();
 		showPopover(target, capturableEl(target).data);
 	}
 
+	// One gesture spans the whole chord hold, so repeat clicks accumulate instead of
+	// each one starting over.
 	function armChordGesture(e) {
+		if (isLiveChordGesture()) { chordGesture.armedAt = performance.now(); return; }
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		const hint = path.find(n => n && n.nodeType === 1) || e.target;
 		chordGesture = {
@@ -1422,11 +1481,17 @@
 		const target = resolveChordTarget(e, null);
 		if (!target) return;
 		const accumulated = chordGesture.accumulated;
-		if (!accumulated.includes(target)) accumulated.push(target);
+		if (!accumulated.includes(target)) {
+			accumulated.push(target);
+			// Without a marker there's no way to tell that a multi-select is building.
+			markGroupTarget(target);
+		}
+		chordGesture.armedAt = performance.now();
 	}
 
 	function clearChordGesture() {
 		chordGesture = null;
+		clearGroupMarkers();
 	}
 
 	function isLiveChordGesture() {
@@ -1436,6 +1501,23 @@
 			return false;
 		}
 		return true;
+	}
+
+	// --- Group selection markers ---
+	let groupMarkers = [];
+
+	function markGroupTarget(el) {
+		const r = el.getBoundingClientRect();
+		const m = document.createElement('div');
+		m.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483645;border:2px solid #2f855a;border-radius:2px;background:rgba(47,133,90,0.08);top:'
+			+ r.top + 'px;left:' + r.left + 'px;width:' + r.width + 'px;height:' + r.height + 'px';
+		document.body.appendChild(m);
+		groupMarkers.push(m);
+	}
+
+	function clearGroupMarkers() {
+		for (const m of groupMarkers) m.remove();
+		groupMarkers = [];
 	}
 
 	const CAPTURE = { capture: true, passive: false };
@@ -1448,7 +1530,7 @@
 
 	function finishChordGesture(e) {
 		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
-		if (isRfChrome(e.target)) { clearChordGesture(); return; }
+		if (e.target && isRfChrome(e.target)) { clearChordGesture(); return; }
 		killEvent(e);
 		const accumulated = chordGesture ? [...chordGesture.accumulated] : [];
 		const alreadyOpened = !!(chordGesture && chordGesture.opened);
@@ -1456,8 +1538,14 @@
 		const hint = chordGesture ? chordGesture.targetHint : null;
 		clearChordGesture();
 		if (alreadyOpened) return;
-		if (accumulated.length >= 2 && accumulated[0] !== accumulated[1]) {
-			showGroupPopover(accumulated);
+		const unique = accumulated.filter((el, i) => accumulated.indexOf(el) === i);
+		if (unique.length >= 2) {
+			showGroupPopover(unique);
+		} else if (unique.length === 1) {
+			// Prefer the element we actually recorded: on the keyup path `e` is a
+			// keyboard event and carries no useful position.
+			hidePopover();
+			showPopover(unique[0], capturableEl(unique[0]).data);
 		} else {
 			openChordAnnotation(e, hint);
 		}
@@ -1465,12 +1553,6 @@
 
 	// Destination-select mode: registered before the chord listeners so
 	// stopImmediatePropagation here keeps the chord handlers out of it entirely.
-	document.addEventListener('mousemove', (e) => {
-		if (!destPick) return;
-		const target = destTargetFrom(e);
-		if (target) showOutline(target, 'dest');
-	}, true);
-
 	for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'auxclick']) {
 		document.addEventListener(type, (e) => {
 			if (!destPick) return;
@@ -1490,13 +1572,39 @@
 		exitDestPick(captureDestination(target));
 	}, CAPTURE);
 
-	// Chord-hold: show outline on mousemove
-	document.addEventListener('mousemove', (e) => {
-		if (destPick) return;
+	// Chord-hold: show outline on mousemove. Hit-testing plus a rect read per event
+	// is wasteful at mousemove rates, so coalesce to one update per frame.
+	let hoverRaf = 0;
+	let hoverEvent = null;
+
+	function flushHover() {
+		hoverRaf = 0;
+		const e = hoverEvent;
+		hoverEvent = null;
+		if (!e) return;
+		if (destPick) {
+			const target = destTargetFrom(e);
+			if (target) showOutline(target, 'dest');
+			return;
+		}
 		if (!IS_CHORD(e)) return hideOutline();
 		const target = resolveChordTarget(e, null);
 		if (target) showOutline(target);
-	});
+	}
+
+	function queueHover(e) {
+		// Snapshot what the handlers read. composedPath() returns an empty array once
+		// dispatch finishes, so it has to be resolved now rather than on the tick.
+		const path = e.composedPath ? e.composedPath() : [e.target];
+		hoverEvent = {
+			clientX: e.clientX, clientY: e.clientY, target: e.target,
+			altKey: e.altKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
+			composedPath: () => path,
+		};
+		if (!hoverRaf) hoverRaf = requestAnimationFrame(flushHover);
+	}
+
+	document.addEventListener('mousemove', queueHover, true);
 
 	document.addEventListener('pointerdown', (e) => {
 		if (!IS_CHORD(e) || isRfChrome(e.target)) return;
@@ -1518,10 +1626,14 @@
 		killEvent(e);
 	}, CAPTURE);
 
+	// While the chord is still held, a mouseup only adds to the selection: the
+	// gesture resolves on chord release (keyup) so multi-click grouping can build up.
+	// Releasing the chord before the mouse is the single-click case, handled here.
 	document.addEventListener('mouseup', (e) => {
 		if (!shouldCaptureChord(e)) return;
 		killEvent(e);
 		if (!isLiveChordGesture()) return;
+		if (IS_CHORD(e)) return;
 		const snap = chordGesture;
 		queueMicrotask(() => {
 			if (chordGesture !== snap) return;
@@ -1532,6 +1644,10 @@
 
 	document.addEventListener('click', (e) => {
 		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
+		// Swallow the click so the host page never sees it, but leave the gesture
+		// open while the chord is down.
+		killEvent(e);
+		if (IS_CHORD(e)) return;
 		finishChordGesture(e);
 	}, CAPTURE);
 
@@ -1560,9 +1676,11 @@
 		if (chordWasActive && !IS_CHORD(e)) {
 			chordWasActive = false;
 			hideOutline();
+			// Chord released: resolve whatever was selected during the hold. One target
+			// opens the normal popover, several open the merged group popover.
 			if (isLiveChordGesture()) {
 				const accumulated = chordGesture ? [...chordGesture.accumulated] : [];
-				if (accumulated.length >= 2) {
+				if (accumulated.length >= 1 && !chordGesture.opened) {
 					killEvent(e);
 					finishChordGesture(e);
 					return;

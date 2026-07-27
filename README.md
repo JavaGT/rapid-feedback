@@ -4,15 +4,27 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 
 ## v5 highlights
 
-- **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (id, aria-label, name, href), dynamic depth
+- **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (aria-label, name, href), shortened to the smallest chain that still resolves uniquely
 - **Chord-hold target preview** — pulsing border outline shows what you're about to click
-- **Element zoom** — ▲/▼ buttons on the popover to walk parent/child elements
-- **Grouping** — hold chord, click multiple elements, release → merged popover for group feedback
-- **Relocation** — "Pick destination" button to annotate where an element should move to
+- **Element zoom** — ▲/▼ for parent/child and ◀/▶ for siblings; the popover header re-renders so you always see what you're about to capture
+- **Grouping** — hold chord, click multiple elements (each marked green), release → merged popover for group feedback
+- **Relocation** — "Pick destination" closes the popover and enters a click-to-select mode; your draft is preserved either way
 - **Tabbed popover** — Comment tab open by default, Styles behind one click; 2-column grid layout for style controls
-- **Auto-reposition** — popover moves below → above → right → left to avoid covering its target
+- **Live style preview** — edits apply to the page as you type and revert on Cancel/Escape, or stay put when you submit
+- **Anchored positioning** — popover moves below → above → right → left to avoid covering its target, and follows it through scrolling and layout shifts
 - **Shadow DOM isolation** — FAB, panel, popover, and toast rendered in shadow roots; immune to host page CSS
 - **Export clarity** — element text first, comment follows, `Tweak:` block for style changes, compact inline refs for groups/relocation
+
+## Interactions
+
+| Gesture | Result |
+| --- | --- |
+| Chord + click | Annotate that element |
+| Chord + several clicks, then release | Group annotation over all of them |
+| Chord, double-tap | Open/close the panel |
+| `Pick destination`, then click | Record where the element should move to |
+| `Esc` | Cancel destination mode, then close the popover, then close the panel |
+| `⌘/Ctrl + Enter` | Submit from the comment box |
 
 ## Export format
 
@@ -30,7 +42,8 @@ Where: div.sections > a.section-link[href="/app/projects/.../files"] > div.link-
 Rect: 434×21
 
 → Destination: div.other-section > a.other-link
-Group: a.first-link, a.second-link
+  Text: “Grades”
+Group: a#first-link "First", a#second-link "Second"
 
 Tweak:
   padding: 12px;
