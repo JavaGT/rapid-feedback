@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rapid Feedback v5 — Live-Styles UX Prototype</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: #f7fafc; }
+  .page {
+    max-width: 900px; margin: 0 auto; padding: 40px 20px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px;
+  }
+  .card {
+    padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff;
+    cursor: pointer; position: relative;
+  }
+  .card h3 { margin: 0 0 8px 0; font-size: 15px; }
+  .card p { margin: 0; font-size: 13px; color: #718096; }
+  .card.active { outline: 3px solid #4a5568; outline-offset: 2px; }
+
+  /* Edge-test cards */
+  .top-left { position: fixed; top: 20px; left: 20px; width: 160px; }
+  .top-right { position: fixed; top: 20px; right: 20px; width: 160px; }
+  .bottom-left { position: fixed; bottom: 20px; left: 20px; width: 160px; }
+  .bottom-right { position: fixed; bottom: 20px; right: 20px; width: 160px; margin-bottom: 60px; }
+
+  .prototype-switcher {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; padding: 10px 20px;
+    background: #1a202c; color: #fff; border-radius: 100px;
+    font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    z-index: 99999; box-shadow: 0 4px 16px rgba(0,0,0,0.3); user-select: none;
+  }
+  .prototype-switcher button {
+    background: none; border: none; color: #a0aec0; cursor: pointer; font-size: 16px;
+    padding: 2px 6px; border-radius: 3px;
+  }
+  .prototype-switcher button:hover { color: #fff; background: rgba(255,255,255,0.1); }
+  .prototype-switcher .label { font-weight: 600; min-width: 150px; text-align: center; }
+
+  /* --- Popover base --- */
+  .rf-popover {
+    position: fixed; z-index: 10001; width: 320px;
+    background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    font-size: 13px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 14px;
+  }
+  .rf-popover textarea {
+    width: 100%; min-height: 60px; padding: 8px; border: 1px solid #e2e8f0;
+    border-radius: 4px; font: inherit; resize: vertical; box-sizing: border-box;
+  }
+
+  /* --- Variant A: Auto-reposition + sidebar controls --- */
+  .va-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .va-row label { font-size: 11px; color: #718096; width: 80px; flex-shrink: 0; }
+  .va-row input { flex: 1; padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 3px; font: 11px monospace; }
+  .va-row input:focus { outline: 2px solid #4a5568; outline-offset: -1px; }
+  .va-preview { margin-top: 8px; padding: 6px 8px; background: #edf2f7; border-radius: 4px; font-size: 10px; font-family: monospace; color: #718096; }
+  .va-position-badge {
+    position: absolute; top: -8px; right: 8px; font-size: 9px; padding: 1px 5px;
+    background: #4a5568; color: #fff; border-radius: 3px;
+  }
+
+  /* --- Variant B: Minimised mode + pop-in controls --- */
+  .vb-mini {
+    display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+    border-bottom: 1px solid #e2e8f0; margin-bottom: 10px;
+  }
+  .vb-mini button {
+    padding: 3px 8px; border: 1px solid #e2e8f0; border-radius: 4px; background: #fff;
+    cursor: pointer; font-size: 11px;
+  }
+  .vb-mini button.active { background: #4a5568; color: #fff; border-color: #4a5568; }
+  .vb-controls { display: none; }
+  .vb-controls.open { display: block; }
+  .vb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .vb-grid label { font-size: 10px; color: #718096; }
+  .vb-grid input { width: 100%; padding: 3px 6px; border: 1px solid #e2e8f0; border-radius: 3px; font: 11px monospace; box-sizing: border-box; }
+  .vb-grid input:focus { outline: 2px solid #4a5568; outline-offset: -1px; }
+
+  /* --- Variant C: Dock bar --- */
+  .vc-dock {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 10001;
+    background: #1a202c; color: #fff; padding: 10px 20px;
+    display: flex; gap: 12px; align-items: center; font-size: 12px;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.2);
+  }
+  .vc-dock-group { display: flex; align-items: center; gap: 6px; }
+  .vc-dock-group label { color: #a0aec0; font-size: 10px; white-space: nowrap; }
+  .vc-dock input { width: 60px; padding: 3px 6px; border: 1px solid #4a5568; border-radius: 3px;
+    background: #2d3748; color: #fff; font: 11px monospace; }
+  .vc-dock input:focus { outline: 2px solid #718096; outline-offset: -1px; }
+  .vc-dock .vc-range { width: 80px; accent-color: #a0aec0; }
+  .vc-dock .vc-val { color: #a0aec0; font-size: 10px; width: 30px; text-align: right; }
+  .vc-info { font-size: 11px; color: #a0aec0; }
+
+  /* Edge case cards for visual verification */
+  .edge-group { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="card top-left edge"><h3>Top-Left</h3><p>Edge case — should trigger popover reposition</p></div>
+  <div class="card top-right edge"><h3>Top-Right</h3><p>Edge case</p></div>
+  <div class="card bottom-left edge"><h3>Bot-Left</h3><p>Edge case</p></div>
+  <div class="card bottom-right edge"><h3>Bot-Right</h3><p>Edge case — tricky with dock</p></div>
+
+  <div class="card"><h3>Hero Card</h3><p>Large element. Click to see popover placement with space around it.</p></div>
+  <div class="card"><h3>Tight Row</h3><p>This is in the middle of a dense grid. Popover should not cover it.</p></div>
+  <div class="card"><h3>Another Card</h3><p>Same dense grid area.</p></div>
+  <div class="card"><h3>Wide Card</h3><p>This spans a larger area. Popover has room below.</p></div>
+  <div class="card"><h3>Narrow</h3><p>Tiny card.</p></div>
+  <div class="card"><h3>Last Row</h3><p>Near the bottom of the grid.</p></div>
+</div>
+
+<div class="prototype-switcher">
+  <button id="prevVariant">◀</button>
+  <span class="label" id="variantLabel">A — Auto-reposition + Inline</span>
+  <button id="nextVariant">▶</button>
+</div>
+
+<script>
+const VARIANTS = { A: 'A — Auto-reposition + Inline', B: 'B — Minimised Mode + Grid', C: 'C — Dock Bar' };
+let currentVariant = 'A';
+let activeCard = null;
+let popover = null;
+
+function switchVariant(v) {
+  currentVariant = v;
+  const u = new URL(location);
+  u.searchParams.set('variant', v);
+  history.replaceState(null, '', u);
+  document.getElementById('variantLabel').textContent = VARIANTS[v];
+  closePopover();
+}
+
+function closePopover() {
+  if (popover) { popover.remove(); popover = null; }
+  document.querySelectorAll('.card.active').forEach(c => c.classList.remove('active'));
+  activeCard = null;
+}
+
+// --- Positioning engine ---
+
+function placePopover(target, popoverEl) {
+  const r = target.getBoundingClientRect();
+  const pw = popoverEl.offsetWidth || 320;
+  const ph = popoverEl.offsetHeight || 300;
+  const gap = 8;
+  const pad = 8;
+
+  // Try below
+  if (r.bottom + ph + gap + pad <= window.innerHeight) {
+    return { top: r.bottom + gap, left: clamp(r.left, pad, window.innerWidth - pw - pad) };
+  }
+  // Try above
+  if (r.top - ph - gap >= pad) {
+    return { top: r.top - ph - gap, left: clamp(r.left, pad, window.innerWidth - pw - pad) };
+  }
+  // Try right
+  if (r.right + pw + gap + pad <= window.innerWidth) {
+    return { top: clamp(r.top, pad, window.innerHeight - ph - pad), left: r.right + gap };
+  }
+  // Try left
+  if (r.left - pw - gap >= pad) {
+    return { top: clamp(r.top, pad, window.innerHeight - ph - pad), left: r.left - pw - gap };
+  }
+  // Fallback: centered with minimal obstruction
+  const bestY = r.top > window.innerHeight / 2 ? r.top - ph - gap : r.bottom + gap;
+  return { top: clamp(bestY, pad, window.innerHeight - ph - pad), left: clamp(r.left, pad, window.innerWidth - pw - pad) };
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(v, max)); }
+
+// --- Variant A: Auto-reposition + Inline controls ---
+
+function openPopoverA(target) {
+  closePopover();
+  activeCard = target;
+  target.classList.add('active');
+
+  popover = document.createElement('div');
+  popover.className = 'rf-popover';
+  popover.innerHTML = '<div style="font-weight:600;margin-bottom:8px">' + target.querySelector('h3')?.textContent || 'Element' + '</div>' +
+    '<textarea placeholder="What should change?"></textarea>' +
+    '<div class="va-preview">Reposition: below → above → right → left</div>' +
+    '<div style="margin-top:8px">' +
+    '<div class="va-row"><label>Padding</label><input type="text" value="' + (target.style.padding || '20px') + '" data-prop="padding"></div>' +
+    '<div class="va-row"><label>Font size</label><input type="text" value="15px" data-prop="fontSize"></div>' +
+    '<div class="va-row"><label>Color</label><input type="text" value="#2d3748" data-prop="color"></div>' +
+    '<div class="va-row"><label>Background</label><input type="text" value="#ffffff" data-prop="backgroundColor"></div>' +
+    '<div class="va-row"><label>Border radius</label><input type="text" value="8px" data-prop="borderRadius"></div>' +
+    '<div class="va-row"><label>Width</label><input type="text" value="" data-prop="width" placeholder="auto"></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end"><button class="close-btn" style="padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:12px">Close</button><button style="padding:5px 12px;border-radius:4px;background:#4a5568;color:#fff;border:none;cursor:pointer;font-size:12px">Submit</button></div>';
+
+  document.body.appendChild(popover);
+  const pos = placePopover(target, popover);
+  popover.style.top = pos.top + 'px';
+  popover.style.left = pos.left + 'px';
+
+  popover.querySelectorAll('input[data-prop]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const prop = inp.dataset.prop;
+      target.style[prop] = inp.value || '';
+      // Update preview
+      const preview = popover.querySelector('.va-preview');
+      if (preview) preview.textContent = 'Live: ' + prop + ': ' + (inp.value || '(reset)');
+    });
+  });
+  popover.querySelector('.close-btn').addEventListener('click', closePopover);
+}
+
+// --- Variant B: Minimised mode + Grid controls ---
+
+function openPopoverB(target) {
+  closePopover();
+  activeCard = target;
+  target.classList.add('active');
+
+  popover = document.createElement('div');
+  popover.className = 'rf-popover';
+  popover.innerHTML =
+    '<div class="vb-mini">' +
+    '<span style="font-weight:600;font-size:12px">' + (target.querySelector('h3')?.textContent || 'Element') + '</span>' +
+    '<button class="vb-toggle active">Styles</button>' +
+    '<button class="vb-toggle">Comment</button>' +
+    '</div>' +
+    '<textarea class="vb-comment" placeholder="What should change?" style="display:none"></textarea>' +
+    '<div class="vb-controls open">' +
+    '<div class="vb-grid">' +
+    '<label>Padding</label><label>Margin</label>' +
+    '<input type="text" value="' + (target.style.padding || '20px') + '" data-prop="padding">' +
+    '<input type="text" value="" data-prop="margin" placeholder="—">' +
+    '<label>Font size</label><label>Color</label>' +
+    '<input type="text" value="15px" data-prop="fontSize">' +
+    '<input type="text" value="#2d3748" data-prop="color">' +
+    '<label>Background</label><label>Border radius</label>' +
+    '<input type="text" value="#ffffff" data-prop="backgroundColor">' +
+    '<input type="text" value="8px" data-prop="borderRadius">' +
+    '<label>Width</label><label>Height</label>' +
+    '<input type="text" value="" data-prop="width" placeholder="auto">' +
+    '<input type="text" value="" data-prop="height" placeholder="auto">' +
+    '<label>Gap</label><label>Opacity</label>' +
+    '<input type="text" value="" data-prop="gap" placeholder="—">' +
+    '<input type="range" value="1" min="0" max="1" step="0.05" data-prop="opacity" style="accent-color:#4a5568">' +
+    '</div></div>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end"><button class="close-btn" style="padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:12px">Close</button><button style="padding:5px 12px;border-radius:4px;background:#4a5568;color:#fff;border:none;cursor:pointer;font-size:12px">Submit</button></div>';
+
+  document.body.appendChild(popover);
+  const pos = placePopover(target, popover);
+  popover.style.top = pos.top + 'px';
+  popover.style.left = pos.left + 'px';
+
+  popover.querySelectorAll('.vb-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      popover.querySelectorAll('.vb-toggle').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const isStyles = btn.textContent === 'Styles';
+      popover.querySelector('.vb-controls').classList.toggle('open', isStyles);
+      popover.querySelector('.vb-comment').style.display = isStyles ? 'none' : 'block';
+    });
+  });
+
+  popover.querySelectorAll('input[data-prop]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      target.style[inp.dataset.prop] = inp.value || (inp.type === 'range' ? '' : '');
+    });
+  });
+  popover.querySelector('.close-btn').addEventListener('click', closePopover);
+}
+
+// --- Variant C: Dock Bar ---
+
+function openPopoverC(target) {
+  closePopover();
+  activeCard = target;
+  target.classList.add('active');
+
+  // Minimal comment popover
+  const dims = target.getBoundingClientRect();
+  popover = document.createElement('div');
+  popover.className = 'rf-popover';
+  popover.style.width = '280px';
+  popover.innerHTML = '<div style="font-weight:600;margin-bottom:8px">' + (target.querySelector('h3')?.textContent || 'Element') + '</div>' +
+    '<textarea placeholder="What should change?"></textarea>' +
+    '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end"><button class="close-btn" style="padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:12px">Close</button><button style="padding:5px 12px;border-radius:4px;background:#4a5568;color:#fff;border:none;cursor:pointer;font-size:12px">Submit</button></div>';
+  document.body.appendChild(popover);
+  const pos = placePopover(target, popover);
+  popover.style.top = pos.top + 'px';
+  popover.style.left = pos.left + 'px';
+  popover.querySelector('.close-btn').addEventListener('click', closePopover);
+
+  // Bottom dock for styles
+  const existingDock = document.querySelector('.vc-dock');
+  if (existingDock) existingDock.remove();
+  const dock = document.createElement('div');
+  dock.className = 'vc-dock';
+  dock.innerHTML =
+    '<span class="vc-info">' + (target.querySelector('h3')?.textContent || 'Element') + '</span>' +
+    '<div class="vc-dock-group"><label>Padding</label><input type="text" value="' + (target.style.padding || '20px') + '" data-prop="padding"></div>' +
+    '<div class="vc-dock-group"><label>Font</label><input type="text" value="15px" data-prop="fontSize"></div>' +
+    '<div class="vc-dock-group"><label>Color</label><input type="text" value="#2d3748" data-prop="color"></div>' +
+    '<div class="vc-dock-group"><label>Bg</label><input type="text" value="#ffffff" data-prop="backgroundColor"></div>' +
+    '<div class="vc-dock-group"><label>Radius</label><input type="text" value="8px" data-prop="borderRadius"></div>' +
+    '<div class="vc-dock-group"><label>Opacity</label><input type="range" class="vc-range" value="1" min="0" max="1" step="0.05" data-prop="opacity"><span class="vc-val">1</span></div>' +
+    '<button class="close-btn" style="margin-left:auto;padding:5px 12px;border:1px solid #4a5568;border-radius:4px;background:transparent;color:#fff;cursor:pointer;font-size:12px">Done</button>';
+  document.body.appendChild(dock);
+
+  dock.querySelectorAll('input[data-prop]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      target.style[inp.dataset.prop] = inp.value || (inp.type === 'range' ? '' : '');
+      if (inp.type === 'range') dock.querySelector('.vc-val').textContent = inp.value;
+    });
+  });
+  dock.querySelector('.close-btn').addEventListener('click', () => { dock.remove(); closePopover(); });
+}
+
+// --- Event wiring ---
+
+document.querySelectorAll('.card').forEach(card => {
+  card.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (currentVariant === 'A') openPopoverA(card);
+    else if (currentVariant === 'B') openPopoverB(card);
+    else if (currentVariant === 'C') openPopoverC(card);
+  });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { closePopover(); const d = document.querySelector('.vc-dock'); if (d) d.remove(); }
+});
+
+document.getElementById('prevVariant').addEventListener('click', () => {
+  const vs = Object.keys(VARIANTS);
+  const idx = (vs.indexOf(currentVariant) - 1 + vs.length) % vs.length;
+  switchVariant(vs[idx]);
+});
+document.getElementById('nextVariant').addEventListener('click', () => {
+  const vs = Object.keys(VARIANTS);
+  const idx = (vs.indexOf(currentVariant) + 1) % vs.length;
+  switchVariant(vs[idx]);
+});
+
+switchVariant(currentVariant);
+</script>
+</body>
+</html>
