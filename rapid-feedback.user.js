@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.1
+// @version      5.2
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Grouping, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
 // @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
 // @author       You
 // @match        *://*/*
@@ -63,8 +64,7 @@
 	let popoverRoot = null;
 	let targetEl = null;
 	let outlineEl = null;
-	let groupTargets = null;
-	let pickDestinationMode = null;
+	let destPick = null;
 
 	// --- Utility-class detection ---
 	const UTILITY_CLASS_RE = /^(p|m)(t|r|b|l|x|y|s|e)?-\d+|^(w|h|min-w|min-h|max-w|max-h)-\d+|^(text|font|leading|tracking|rounded|border|bg|shadow|opacity|z|flex|grid|gap|items|justify|self|order|overflow|object|top|right|bottom|left|inset|ring|outline|decoration|underline|line-through|no-underline|uppercase|lowercase|capitalize|normal-case|truncate|italic|not-italic|font|antialiased|subpixel-antialiased|align|break|whitespace|list|sr-only|invisible|visible|static|fixed|absolute|relative|sticky|block|inline|flow-root|contents|hidden|isolate|float|clear|container|columns|aspect|basis|grow|shrink)/;
@@ -357,6 +357,7 @@
 			if (a.destination) {
 				const d = a.destination;
 				lines.push('\u2192 Destination: ' + (compactAncestorChain(d.selector, 4) || d.selector));
+				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
 			}
 			if (a.targets && a.targets.length) {
@@ -497,7 +498,9 @@
 .rf-sub{font-size:9px;color:#718096;margin-bottom:4px;font-family:monospace;word-break:break-all;max-height:40px;overflow:hidden}
 .rf-source{font-size:10px;color:#2f855a;margin-bottom:4px;font-family:monospace;word-break:break-all}
 .rf-quote{font-size:11px;color:#718096;margin-bottom:6px;font-style:italic}
-.rf-dest-btn{margin-top:6px}
+.rf-dest-row{display:flex;gap:6px;align-items:center;margin-top:6px}
+.rf-dest-btn{font-size:11px;flex-shrink:0}
+.rf-dest-tag{font-family:monospace;font-size:10px;color:#2b6cb0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 `;
 	}
 
@@ -591,7 +594,7 @@
 	function clamp(v, min, max) { return Math.max(min, Math.min(v, max)); }
 
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
-	function showPopover(el, data) {
+	function showPopover(el, data, initial) {
 		hidePopover();
 		targetEl = el;
 		const { host, root } = createShadowRoot();
@@ -603,7 +606,7 @@
 
 		const popover = document.createElement('div');
 		popover.className = 'rf-popover';
-		const adjustedStyles = {};
+		const adjustedStyles = { ...(initial?.adjustedStyles || {}) };
 		let activeTab = 'comment';
 		let zoomTarget = el;
 
@@ -686,12 +689,13 @@
 		const ta = document.createElement('textarea');
 		ta.className = 'rf-popover-ta';
 		ta.placeholder = 'What should change?';
+		if (initial?.comment) ta.value = initial.comment;
 		commentBody.appendChild(ta);
 
 		// Category bar
 		const catBar = document.createElement('div');
 		catBar.className = 'rf-cat-bar';
-		let selCat = activeCategory;
+		let selCat = initial?.category || activeCategory;
 		for (const c of CATEGORIES) {
 			const btn = document.createElement('button');
 			btn.className = 'rf-cat-btn' + (c.id === selCat ? ' active' : '');
@@ -705,21 +709,41 @@
 		}
 		commentBody.appendChild(catBar);
 
-		// Pick destination button
+		// Pick destination
+		let destData = initial?.destination || null;
+
+		const destRow = document.createElement('div');
+		destRow.className = 'rf-dest-row';
 		const destBtn = document.createElement('button');
 		destBtn.className = 'rf-btn rf-dest-btn';
-		destBtn.style.cssText = 'margin-top:6px;font-size:11px';
-		destBtn.textContent = 'Pick destination';
-		let destData = null;
-		destBtn.addEventListener('click', () => {
-			pickDestinationMode = () => {
-				destData = data;
-				destBtn.textContent = 'Waiting for click\u2026';
-				destBtn.style.background = '#edf2f7';
-			};
-			pickDestinationMode();
+		destBtn.textContent = destData ? 'Change destination' : 'Pick destination';
+		const destTag = document.createElement('span');
+		destTag.className = 'rf-dest-tag';
+		if (destData) destTag.textContent = '\u2192 ' + (compactAncestorChain(destData.selector, 2) || destData.selector);
+		const destClear = document.createElement('button');
+		destClear.className = 'rf-btn rf-btn-sm';
+		destClear.textContent = '\u00d7';
+		destClear.title = 'Clear destination';
+		destClear.style.display = destData ? 'block' : 'none';
+		destClear.addEventListener('click', () => {
+			destData = null;
+			destTag.textContent = '';
+			destClear.style.display = 'none';
+			destBtn.textContent = 'Pick destination';
 		});
-		commentBody.appendChild(destBtn);
+		destBtn.addEventListener('click', () => {
+			// Snapshot the draft, close the popover, and enter destination-select mode.
+			enterDestPick(el, data, {
+				comment: ta.value,
+				category: selCat,
+				adjustedStyles: { ...adjustedStyles },
+				destination: destData,
+			});
+		});
+		destRow.appendChild(destBtn);
+		destRow.appendChild(destTag);
+		destRow.appendChild(destClear);
+		commentBody.appendChild(destRow);
 
 		popover.appendChild(commentBody);
 
@@ -734,7 +758,7 @@
 			stylesGrid.appendChild(label);
 		}
 		for (const ap of ADJUSTABLE_PROPS) {
-			const currentVal = data.styles?.[ap.key] || '';
+			const currentVal = adjustedStyles[ap.key] || data.styles?.[ap.key] || '';
 			if (ap.isRange) {
 				const v = parseFloat(currentVal);
 				const inp = document.createElement('input');
@@ -812,7 +836,7 @@
 				comment,
 				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
-				destination: destData ? { selector: data.selector, a11y: data.a11y } : null,
+				destination: destData,
 			};
 			// Re-resolve via zoom target
 			if (zoomTarget !== el) {
@@ -844,7 +868,7 @@
 				...data,
 				comment,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
-				destination: destData ? { selector: data.selector, a11y: data.a11y } : null,
+				destination: destData,
 			});
 			copyText(toMarkdown([ann]));
 			hidePopover();
@@ -982,7 +1006,6 @@
 	function hidePopover() {
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		targetEl = null;
-		pickDestinationMode = null;
 		hideOutline();
 	}
 
@@ -1206,14 +1229,30 @@
 	}
 
 	// --- Chord-hold outline ---
-	function showOutline(el) {
+	const OUTLINE_BASE = 'position:fixed;pointer-events:none;z-index:2147483646;border-radius:2px;transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
+	const OUTLINE_VARIANTS = {
+		target: 'border:2px solid #4a5568;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(74,85,104,0.15)',
+		dest: 'border:2px dashed #2b6cb0;box-shadow:0 0 0 4px rgba(43,108,176,0.18)',
+	};
+
+	function ensureOutlineAnim() {
+		if (document.getElementById('rf-outline-anim')) return;
+		const anim = document.createElement('style');
+		anim.id = 'rf-outline-anim';
+		anim.textContent = '@keyframes rf-outline-pulse{0%,100%{border-color:#4a5568;box-shadow:0 0 0 4px rgba(74,85,104,0.15)}50%{border-color:#718096;box-shadow:0 0 0 8px rgba(74,85,104,0.08)}}';
+		document.head.appendChild(anim);
+	}
+
+	function showOutline(el, variant) {
+		const v = variant || 'target';
 		if (!outlineEl) {
+			ensureOutlineAnim();
 			outlineEl = document.createElement('div');
-			outlineEl.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;border:2px solid #4a5568;border-radius:2px;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(74,85,104,0.15);transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
-			const anim = document.createElement('style');
-			anim.textContent = '@keyframes rf-outline-pulse{0%,100%{border-color:#4a5568;box-shadow:0 0 0 4px rgba(74,85,104,0.15)}50%{border-color:#718096;box-shadow:0 0 0 8px rgba(74,85,104,0.08)}}';
-			document.head.appendChild(anim);
 			document.body.appendChild(outlineEl);
+		}
+		if (outlineEl.dataset.rfVariant !== v) {
+			outlineEl.dataset.rfVariant = v;
+			outlineEl.style.cssText = OUTLINE_BASE + ';' + OUTLINE_VARIANTS[v];
 		}
 		const r = el.getBoundingClientRect();
 		outlineEl.style.top = r.top + 'px';
@@ -1224,6 +1263,77 @@
 
 	function hideOutline() {
 		if (outlineEl) { outlineEl.remove(); outlineEl = null; }
+	}
+
+	// --- Destination-select mode ---
+	// Pick destination closes the popover and puts the page into a plain-click
+	// selection mode: no chord needed, next left click picks the destination,
+	// Escape cancels. Either way the draft popover is restored afterwards.
+	function enterDestPick(sourceEl, sourceData, draft) {
+		hidePopover();
+		destPick = { sourceEl, sourceData, draft };
+		document.documentElement.style.cursor = 'crosshair';
+		showDestBanner();
+	}
+
+	function exitDestPick(destination) {
+		if (!destPick) return;
+		const { sourceEl, sourceData, draft } = destPick;
+		destPick = null;
+		document.documentElement.style.cursor = '';
+		hideDestBanner();
+		hideOutline();
+		showPopover(sourceEl, sourceData, { ...draft, destination: destination || draft.destination });
+		if (destination) showToast('Destination set');
+	}
+
+	let destBannerEl = null;
+
+	function showDestBanner() {
+		hideDestBanner();
+		const { host, root } = createShadowRoot();
+		host.style.cssText = 'all:initial;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
+		root.appendChild(shadowStyle());
+		const s = document.createElement('style');
+		s.textContent = `
+.rf-banner{background:#2b6cb0;color:#fff;padding:8px 14px;border-radius:6px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;gap:10px;align-items:center}
+.rf-banner b{font-weight:600}
+.rf-banner span{opacity:0.85}
+`;
+		root.appendChild(s);
+		const b = document.createElement('div');
+		b.className = 'rf-banner';
+		const strong = document.createElement('b');
+		strong.textContent = 'Click the destination element';
+		const hint = document.createElement('span');
+		hint.textContent = 'Esc to cancel';
+		b.appendChild(strong);
+		b.appendChild(hint);
+		root.appendChild(b);
+		destBannerEl = host;
+	}
+
+	function hideDestBanner() {
+		if (destBannerEl) { destBannerEl.remove(); destBannerEl = null; }
+	}
+
+	function destTargetFrom(e) {
+		const path = e.composedPath ? e.composedPath() : [e.target];
+		const el = path.find(n => n && n.nodeType === 1) || e.target;
+		if (!el || el.nodeType !== 1) return null;
+		if (isRfChrome(el)) return null;
+		if (el === document.body || el === document.documentElement) return null;
+		return el;
+	}
+
+	function captureDestination(el) {
+		return {
+			selector: describeElement(el),
+			tag: el.tagName.toLowerCase(),
+			text: getTextSnippet(el),
+			a11y: getA11y(el),
+			rect: getBoundingRect(el),
+		};
 	}
 
 	// --- Events ---
@@ -1284,12 +1394,6 @@
 	function openChordAnnotation(e, hint) {
 		const target = resolveChordTarget(e, hint);
 		if (!target) return;
-		// Pick destination mode
-		if (pickDestinationMode) {
-			pickDestinationMode = null;
-			hidePopover();
-			return;
-		}
 		// Group mode: the chordGesture tracks accumulated targets
 		const accumulated = chordGesture?.accumulated || [];
 		if (accumulated.length >= 1) {
@@ -1359,8 +1463,36 @@
 		}
 	}
 
+	// Destination-select mode: registered before the chord listeners so
+	// stopImmediatePropagation here keeps the chord handlers out of it entirely.
+	document.addEventListener('mousemove', (e) => {
+		if (!destPick) return;
+		const target = destTargetFrom(e);
+		if (target) showOutline(target, 'dest');
+	}, true);
+
+	for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'auxclick']) {
+		document.addEventListener(type, (e) => {
+			if (!destPick) return;
+			if (isRfChrome(e.target)) return;
+			killEvent(e);
+		}, CAPTURE);
+	}
+
+	document.addEventListener('click', (e) => {
+		if (!destPick) return;
+		if (isRfChrome(e.target)) return;
+		killEvent(e);
+		if (e.button != null && e.button !== 0) return;
+		const target = destTargetFrom(e);
+		if (!target) return;
+		if (target === destPick.sourceEl) { showToast('That is the source element'); return; }
+		exitDestPick(captureDestination(target));
+	}, CAPTURE);
+
 	// Chord-hold: show outline on mousemove
 	document.addEventListener('mousemove', (e) => {
+		if (destPick) return;
 		if (!IS_CHORD(e)) return hideOutline();
 		const target = resolveChordTarget(e, null);
 		if (target) showOutline(target);
@@ -1414,6 +1546,7 @@
 
 	document.addEventListener('keydown', (e) => {
 		if (e.key === 'Escape') {
+			if (destPick) { killEvent(e); exitDestPick(null); return; }
 			if (popoverEl) { hidePopover(); return; }
 			if (panelEl && panelEl.style.display !== 'none') { closePanel(); return; }
 		}
