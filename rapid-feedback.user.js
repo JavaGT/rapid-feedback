@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.0
+// @version      5.1
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Grouping, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
 // @author       You
 // @match        *://*/*
 // @grant        none
@@ -644,12 +645,22 @@
 			if (zoomTarget.parentElement && zoomTarget.parentElement !== document.body && zoomTarget.parentElement !== document.documentElement) {
 				zoomTarget = zoomTarget.parentElement;
 				zoomTag.textContent = compactLabel(zoomTarget);
+				showOutline(zoomTarget);
+				const r = zoomTarget.getBoundingClientRect();
+				const pos = placePopover(r, POPOVER_W, 480);
+				host.style.top = pos.top + 'px';
+				host.style.left = pos.left + 'px';
 			}
 		});
 		downBtn.addEventListener('click', () => {
 			if (zoomTarget.firstElementChild) {
 				zoomTarget = zoomTarget.firstElementChild;
 				zoomTag.textContent = compactLabel(zoomTarget);
+				showOutline(zoomTarget);
+				const r = zoomTarget.getBoundingClientRect();
+				const pos = placePopover(r, POPOVER_W, 480);
+				host.style.top = pos.top + 'px';
+				host.style.left = pos.left + 'px';
 			}
 		});
 		zoomRow.appendChild(upBtn);
@@ -972,6 +983,7 @@
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		targetEl = null;
 		pickDestinationMode = null;
+		hideOutline();
 	}
 
 	function applyStyle(prop, val, adjustedStyles) {
