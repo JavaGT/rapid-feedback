@@ -1,24 +1,41 @@
-# Rapid Feedback
+# Rapid Feedback v5
 
 Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows/Linux) and click any element to annotate it. Exports as compact Markdown or JSON.
 
-## Export format (compact)
+## v5 highlights
+
+- **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (id, aria-label, name, href), dynamic depth
+- **Chord-hold target preview** — pulsing border outline shows what you're about to click
+- **Element zoom** — ▲/▼ buttons on the popover to walk parent/child elements
+- **Grouping** — hold chord, click multiple elements, release → merged popover for group feedback
+- **Relocation** — "Pick destination" button to annotate where an element should move to
+- **Tabbed popover** — Comment tab open by default, Styles behind one click; 2-column grid layout for style controls
+- **Auto-reposition** — popover moves below → above → right → left to avoid covering its target
+- **Shadow DOM isolation** — FAB, panel, popover, and toast rendered in shadow roots; immune to host page CSS
+- **Export clarity** — element text first, comment follows, `Tweak:` block for style changes, compact inline refs for groups/relocation
+
+## Export format
 
 ```markdown
 # Feedback — Scope
-Page: /app/projects/cmq8t88nd00iy7ko5wge59amw
+Page: /app/projects/example
 Env: 1440×900 · Chrome on macOS
 
 ## 1. [GENERAL] Files
-This is an example of what the user is providing as feedback.
+> This is the displayed text on the element
+The user's comment goes here — clearly distinguished from the element text above.
 
-Where: div.app-shell > main.app-main > div.page > div.sections > div.link-grid > a.section-link.card[href="/app/projects/.../files"] > div.link-main
-Text: "Files"
-Href: /app/projects/.../files
-Rect: 434×21 @ 549,391
+A11y: role=link name="Files"
+Where: div.sections > a.section-link[href="/app/projects/.../files"] > div.link-main
+Rect: 434×21
+
+→ Destination: div.other-section > a.other-link
+Group: a.first-link, a.second-link
+
+Tweak:
+  padding: 12px;
+  font-size: 14px;
 ```
-
-Intent leads; partial ancestor chains show where in the app (Svelte scope hashes stripped). Session context appears once at the top.
 
 ## Install
 
