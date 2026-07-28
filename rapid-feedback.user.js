@@ -188,6 +188,12 @@
 		return m ? m[1] : norm.replace(/^.*?\/([^/]+\/[^/]+\.svelte)$/, '$1');
 	}
 
+	function baseName(file) {
+		if (!file) return file;
+		const norm = String(file).replace(/\\/g, '/');
+		return norm.slice(norm.lastIndexOf('/') + 1);
+	}
+
 	function getSourceLoc(el) {
 		const metaEl = findSvelteMetaEl(el);
 		if (!metaEl) return null;
@@ -200,7 +206,7 @@
 			if (node.file) {
 				stack.push({
 					type: node.type || 'component',
-					ref: relSourceFile(node.file) + (node.line ? ':' + node.line : '')
+					ref: baseName(node.file) + (node.line ? ':' + node.line : '')
 				});
 			}
 			node = node.parent;
