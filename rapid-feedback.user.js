@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.4
+// @version      5.5
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
 // @note         v5.3.1: component chain shows file names instead of full paths
 // @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
 // @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
@@ -62,6 +63,7 @@
 	const TEXT_MAX = 150;
 	const POPOVER_W = 320;
 	const PANEL_W = 380;
+	const SIMILAR_MAX = 50;
 
 	let annotations = [];
 	let activeCategory = 'general';
@@ -308,6 +310,19 @@
 	// Live element → short label (popover chrome).
 	function compactLabel(el) {
 		return shortLabel(el.tagName.toLowerCase(), el.id, getA11y(el)?.name, getTextSnippet(el));
+	}
+
+	function positionalLabel(el) {
+		let n = 1;
+		for (let prev = el.previousElementSibling; prev; prev = prev.previousElementSibling) {
+			if (prev.tagName === el.tagName) n++;
+		}
+		return el.tagName.toLowerCase() + ':nth-of-type(' + n + ')';
+	}
+
+	function resolveStoredMember(ref) {
+		if (!ref?.selector) return null;
+		try { return document.querySelector(ref.selector); } catch { return null; }
 	}
 
 	// Stored target/destination record → short label (exports). Same shape of output,
@@ -563,6 +578,8 @@
 .rf-sel-row:last-child{border-bottom:none}
 .rf-sel-row:hover{background:#edf2f7}
 .rf-sel-row.primary{background:#f0fff4}
+.rf-sel-row.missing{background:#fff5f5;color:#9b2c2c}
+.rf-sel-status,.rf-primary-hint{font-size:10px;color:#718096;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rf-sel-name{flex:1;min-width:0;font-family:monospace;font-size:10px;color:#2d3748;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rf-sel-act{border:none;background:0 0;color:#718096;cursor:pointer;font-size:11px;line-height:1;padding:2px 5px;border-radius:3px;flex-shrink:0}
 .rf-sel-act:hover{background:#e2e8f0;color:#2d3748}
@@ -600,13 +617,15 @@
 `;
 	}
 
-	// --- Toast (light-DOM, simple) ---
+	// --- Toast (shadow DOM) ---
 	function showToast(msg) {
+		const { host, root } = createShadowRoot();
+		host.style.cssText = 'all:initial;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
 		const el = document.createElement('div');
-		el.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:6px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;z-index:2147483647;box-shadow:0 2px 8px rgba(0,0,0,0.2);pointer-events:none;background:#4a5568;color:#fff';
+		el.style.cssText = 'padding:8px 16px;border-radius:6px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);background:#4a5568;color:#fff';
 		el.textContent = msg;
-		document.body.appendChild(el);
-		setTimeout(() => el.remove(), 2000);
+		root.appendChild(el);
+		setTimeout(() => host.remove(), 2000);
 	}
 
 	// --- FAB (shadow DOM) ---
@@ -722,6 +741,8 @@
 		// members. Holding live nodes (not frozen refs) is what makes the list
 		// editable: rows can be dropped, promoted or added while the popover is open.
 		let members = (initial?.members?.length ? initial.members : [el]).filter(m => m?.isConnected);
+		let missingMembers = [...(initial?.missingMembers || [])];
+		let similarAdded = [];
 		if (!members.includes(el)) members.unshift(el);
 		// Assigned once the styles grid exists; zooming re-seeds it.
 		let refreshStyleInputs = () => {};
@@ -767,10 +788,14 @@
 		const selHead = document.createElement('div');
 		selHead.className = 'rf-sel-head';
 		const selCount = document.createElement('span');
+		const similarBtn = document.createElement('button');
+		similarBtn.className = 'rf-btn rf-btn-sm';
+		similarBtn.textContent = '⧉ Select similar';
 		const addBtn = document.createElement('button');
 		addBtn.className = 'rf-btn rf-btn-sm';
 		addBtn.textContent = '+ Add element';
 		selHead.appendChild(selCount);
+		selHead.appendChild(similarBtn);
 		selHead.appendChild(addBtn);
 		const selList = document.createElement('div');
 		selList.className = 'rf-sel-list';
@@ -829,18 +854,27 @@
 		}
 
 		function renderMembers() {
-			selCount.textContent = 'Selection — ' + members.length + (members.length === 1 ? ' element' : ' elements');
+			const total = members.length + missingMembers.length;
+			selCount.textContent = 'Selection — ' + total + (total === 1 ? ' element' : ' elements');
 			selList.innerHTML = '';
 			// A one-row list is pure noise; the header already names that element.
-			selList.style.display = members.length > 1 ? 'block' : 'none';
-			zoomRow.style.display = members.length > 1 ? 'none' : 'flex';
-			if (members.length > 1) {
+			selList.style.display = total > 1 ? 'block' : 'none';
+			zoomRow.style.display = total > 1 ? 'none' : 'flex';
+			if (missingMembers.length) {
+				const status = document.createElement('div');
+				status.className = 'rf-sel-status';
+				status.textContent = members.length + ' of ' + total + ' elements still found';
+				selList.appendChild(status);
+			}
+			if (members.length > 1 || missingMembers.length) {
+				const labels = members.map(compactLabel);
 				members.forEach((m, i) => {
 					const row = document.createElement('div');
 					row.className = 'rf-sel-row' + (i === 0 ? ' primary' : '');
 					const name = document.createElement('span');
 					name.className = 'rf-sel-name';
-					name.textContent = (i === 0 ? '● ' : '○ ') + compactLabel(m);
+					const label = labels[i];
+					name.textContent = (i === 0 ? '● ' : '○ ') + label + (labels.filter(l => l === label).length > 1 ? ' (' + positionalLabel(m) + ')' : '');
 					name.title = describeElement(m);
 					row.appendChild(name);
 					if (i > 0) {
@@ -869,9 +903,50 @@
 					row.addEventListener('mouseleave', () => showOutline(members[0]));
 					selList.appendChild(row);
 				});
+				missingMembers.forEach((ref, i) => {
+					const row = document.createElement('div');
+					row.className = 'rf-sel-row missing';
+					const name = document.createElement('span');
+					name.className = 'rf-sel-name';
+					name.textContent = '○ ' + compactRefLabel(ref) + ' (not found)';
+					name.title = ref.selector || 'Could not resolve selector';
+					const del = document.createElement('button');
+					del.className = 'rf-sel-act';
+					del.textContent = '×';
+					del.title = 'Drop unresolvable member';
+					del.addEventListener('click', () => { missingMembers.splice(i, 1); renderMembers(); });
+					row.appendChild(name);
+					row.appendChild(del);
+					selList.appendChild(row);
+				});
 			}
 			renderHeader();
 		}
+
+		// Direct siblings are predictable repeated peers and avoid sweeping unrelated page content.
+		function selectSimilar() {
+			if (similarAdded.length) {
+				members = members.filter(member => !similarAdded.includes(member));
+				similarAdded = [];
+				similarBtn.textContent = '⧉ Select similar';
+				syncSelection();
+				showToast('Similar selection undone');
+				return;
+			}
+			const signature = filterClasses(zoomTarget.className).sort().join(' ');
+			const allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
+				return candidate.tagName === zoomTarget.tagName && filterClasses(candidate.className).sort().join(' ') === signature;
+			}).filter(candidate => !members.includes(candidate));
+			const matches = allMatches.slice(0, SIMILAR_MAX);
+			if (!matches.length) { showToast('No similar siblings found'); return; }
+			similarAdded = matches;
+			members.push(...matches);
+			similarBtn.textContent = 'Undo similar selection';
+			syncSelection();
+			showToast('Added ' + matches.length + ' similar element' + (matches.length === 1 ? '' : 's') + (allMatches.length > SIMILAR_MAX ? ' (capped at ' + SIMILAR_MAX + ')' : ''));
+		}
+
+		similarBtn.addEventListener('click', selectSimilar);
 
 		addBtn.addEventListener('click', () => {
 			revertStyles();
@@ -901,6 +976,10 @@
 		zoomRow.appendChild(nextBtn);
 		zoomRow.appendChild(zoomTag);
 		popover.appendChild(zoomRow);
+		const primaryHint = document.createElement('div');
+		primaryHint.className = 'rf-primary-hint';
+		primaryHint.textContent = '● Primary controls styles, zoom, destination, and exported Where';
+		popover.appendChild(primaryHint);
 
 		// Tab row
 		const tabRow = document.createElement('div');
@@ -971,6 +1050,8 @@
 				adjustedStyles: { ...adjustedStyles },
 				destination: destData,
 				members: [...members],
+				missingMembers: [...missingMembers],
+				editIndex: initial?.editIndex,
 			};
 		}
 
@@ -1074,7 +1155,8 @@
 		// Actions
 		// The non-primary members, frozen into the shape the export and storage use.
 		function memberRefs() {
-			return members.length > 1 ? members.slice(1).map(captureMemberRef) : null;
+			const refs = members.slice(1).map(captureMemberRef).concat(missingMembers);
+			return refs.length ? refs : null;
 		}
 
 		function submit() {
@@ -1093,7 +1175,10 @@
 				destination: destData,
 				targets: memberRefs(),
 			};
-			persist(() => { annotations.push(makeAnnotation(annotationData)); });
+			persist(() => {
+				if (Number.isInteger(initial?.editIndex) && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
+				else annotations.push(makeAnnotation(annotationData));
+			});
 			keepStyles();
 			hidePopover();
 			showToast('Saved');
@@ -1358,23 +1443,19 @@
 				showToast('Deleted');
 				return;
 			}
-			const card = list.querySelector('[data-idx="' + idx + '"]');
-			if (!card) return;
-			const cel = card.querySelector('.rf-comment');
-			if (!cel) return;
-			if (cel.getAttribute('contenteditable') === 'true') {
-				persist(() => { a.comment = cel.textContent.trim(); });
-				cel.setAttribute('contenteditable', 'false');
-				cel.style.background = '#edf2f7';
-				cel.style.borderLeftColor = '#e2e8f0';
-				editBtn.textContent = '\u270E';
-			} else {
-				cel.setAttribute('contenteditable', 'true');
-				cel.style.background = '#fff';
-				cel.style.borderLeftColor = '#4a5568';
-				cel.focus();
-				editBtn.textContent = '\u2713';
-			}
+			const primary = resolveStoredMember(a);
+			if (!primary) { showToast('Primary element is no longer on this page'); return; }
+			const refs = a.targets || [];
+			const found = refs.map(resolveStoredMember);
+			showPopover(primary, capturableEl(primary).data, {
+				comment: a.comment,
+				category: a.category,
+				adjustedStyles: a.adjustedStyles,
+				destination: a.destination,
+				members: [primary, ...found.filter(Boolean)],
+				missingMembers: refs.filter((ref, i) => !found[i]),
+				editIndex: idx,
+			});
 		});
 
 		const footer = document.createElement('div');
@@ -1890,6 +1971,27 @@
 		}
 		if (!IS_CHORD(e) && !hasAnnotations()) concealFab();
 	}, true);
+
+	// A selector can point at a different component after a route swap, so closing is
+	// safer than silently retargeting an unsaved draft onto the new screen.
+	function handleRouteChange() {
+		if (!popoverEl && !pickMode && !chordGesture) return;
+		pickMode = null;
+		document.documentElement.style.cursor = '';
+		hidePickBanner();
+		clearChordGesture();
+		hidePopover();
+		showToast('Draft selection closed after page navigation');
+	}
+	for (const method of ['pushState', 'replaceState']) {
+		const original = history[method];
+		history[method] = function (...args) {
+			const result = original.apply(this, args);
+			handleRouteChange();
+			return result;
+		};
+	}
+	addEventListener('popstate', handleRouteChange);
 
 	// --- API ---
 	window.__SCOPE_FEEDBACK_API__ = {

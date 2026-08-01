@@ -58,3 +58,15 @@ Tweak (all 3 elements):
 ## Install
 
 Install from [rapid-feedback.user.js](https://gist.githubusercontent.com/JavaGT/6ca097d0ded9b16e69549e0648a50f96/raw/rapid-feedback.user.js) into Tampermonkey.
+
+## Tests
+
+The dev-only Puppeteer harness runs the userscript against `test/page.html` in headless Chrome:
+
+```sh
+cd test
+npm install
+npm test
+```
+
+It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.

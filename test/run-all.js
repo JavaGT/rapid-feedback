@@ -1,0 +1,8 @@
+const suites = [require('./run'), require('./run2'), require('./run3')];
+
+(async () => {
+	let passed = 0;
+	for (const suite of suites) if (await suite()) passed++;
+	console.log('\n' + passed + '/' + suites.length + ' suites passed');
+	process.exit(passed === suites.length ? 0 : 1);
+})().catch(e => { console.error('HARNESS ERROR', e); process.exit(2); });
