@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
-// @namespace    https://scope.javagrant.ac.nz
-// @version      5.7
+// @namespace    javagrant.ac.nz
+// @version      5.8
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
 // @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
 // @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
 // @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
