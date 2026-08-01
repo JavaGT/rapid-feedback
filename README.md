@@ -61,7 +61,9 @@ Tweak (all 3 elements):
 
 ## Install
 
-Install from [rapid-feedback.user.js](https://gist.githubusercontent.com/JavaGT/6ca097d0ded9b16e69549e0648a50f96/raw/rapid-feedback.user.js) into Tampermonkey.
+Install from [rapid-feedback.user.js](https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js) into Tampermonkey. Tampermonkey tracks that URL for updates.
+
+This repository is the single source of truth. The script was previously distributed from [a gist](https://gist.github.com/JavaGT/6ca097d0ded9b16e69549e0648a50f96), which is frozen at the v5.7 cutover build and only exists so installs predating the move can still find their way here.
 
 ## Tests
 
