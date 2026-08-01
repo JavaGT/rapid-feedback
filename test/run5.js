@@ -16,6 +16,19 @@ module.exports = async function run() {
 			document.body.appendChild(t);
 		});
 
+		// --- A concealed FAB must not intercept ordinary clicks ---
+		// It starts hidden with no annotations on this page. Hidden has to mean
+		// untouchable: opacity:0 alone still hit-tests.
+		await page.evaluate(() => { window.__rfHits = 0; document.getElementById('under-fab').addEventListener('click', () => window.__rfHits++); });
+		await page.$eval('#under-fab', el => { const r = el.getBoundingClientRect(); window.__rfPt = { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+		const pt = await page.evaluate(() => window.__rfPt);
+		await page.mouse.click(pt.x, pt.y);
+		await new Promise(r => setTimeout(r, 150));
+		let hits = await page.evaluate(() => window.__rfHits);
+		const panelAfter = await page.evaluate(`(() => !!${PANEL} && ${PANEL}.host.style.display !== 'none')()`);
+		check('a concealed FAB does not swallow ordinary clicks', hits === 1, 'hits=' + hits);
+		check('a concealed FAB does not open the panel', !panelAfter, String(panelAfter));
+
 		// --- Chord + click where the FAB sits: the element underneath wins ---
 		await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
 		await page.mouse.move(600, 400); // reveal FAB via chord keydown already done

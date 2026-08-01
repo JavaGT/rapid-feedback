@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.8
+// @version      5.9
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
 // @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
 // @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
 // @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
@@ -652,11 +653,16 @@
 	function createFab() {
 		if (fabEl) return;
 		const { host, root } = createShadowRoot();
-		host.style.cssText = 'all:initial;position:fixed;bottom:20px;right:20px;z-index:2147483645';
+		// The host must not take hits itself: `all:initial` resets pointer-events to
+		// auto, which would leave an invisible box parked in the corner.
+		host.style.cssText = 'all:initial;position:fixed;bottom:20px;right:20px;z-index:2147483645;pointer-events:none';
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
+		// Hidden is the default state, and hidden means untouchable — opacity alone
+		// still hit-tests, so a concealed FAB used to swallow clicks in that corner.
 		s.textContent = `
-.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#4a5568;pointer-events:auto;opacity:0;transform:translateX(60px)}
+.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#4a5568;pointer-events:none;opacity:0;transform:translateX(60px)}
+.rf-fab.rf-fab-on{pointer-events:auto;opacity:1;transform:translateX(0)}
 `;
 		root.appendChild(s);
 		const btn = document.createElement('button');
@@ -675,14 +681,12 @@
 
 	function revealFab() {
 		if (!fabEl) createFab();
-		fabEl.btn.style.opacity = '1';
-		fabEl.btn.style.transform = 'translateX(0)';
+		fabEl.btn.classList.add('rf-fab-on');
 	}
 
 	function concealFab() {
 		if (!fabEl) return;
-		fabEl.btn.style.opacity = '0';
-		fabEl.btn.style.transform = 'translateX(60px)';
+		fabEl.btn.classList.remove('rf-fab-on');
 	}
 
 	// While a chord is held or a pick mode is running, every click is meant for the
