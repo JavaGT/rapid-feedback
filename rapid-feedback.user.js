@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.5
+// @version      5.6
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
 // @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
 // @note         v5.3.1: component chain shows file names instead of full paths
 // @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
@@ -64,6 +65,8 @@
 	const POPOVER_W = 320;
 	const PANEL_W = 380;
 	const SIMILAR_MAX = 50;
+	const RF_CHROME_ATTR = 'data-rf-chrome';
+	const RF_PASSTHROUGH_ATTR = 'data-rf-passthrough';
 
 	let annotations = [];
 	let activeCategory = 'general';
@@ -74,6 +77,8 @@
 	let popoverRoot = null;
 	let outlineEl = null;
 	let pickMode = null;
+	// Handle onto the open popover, so a chord gesture can grow its selection.
+	let popoverApi = null;
 	// Live style edits apply to every selected element, so both the targets and the
 	// snapshot of what to restore are per-element.
 	let styleTargets = [];
@@ -539,6 +544,9 @@
 	function createShadowRoot() {
 		const host = document.createElement('div');
 		host.style.cssText = 'all:initial;position:fixed;z-index:2147483646;pointer-events:none';
+		// Every piece of our own chrome carries this marker, so isRfChrome can reject
+		// it by inspection rather than by keeping a list of hosts in sync.
+		host.setAttribute(RF_CHROME_ATTR, '');
 		const root = host.attachShadow({ mode: 'open' });
 		document.body.appendChild(host);
 		return { host, root };
@@ -548,6 +556,7 @@
 		const s = document.createElement('style');
 		s.textContent = `
 :host{all:initial}
+:host([${RF_PASSTHROUGH_ATTR}]),:host([${RF_PASSTHROUGH_ATTR}]) *{pointer-events:none !important}
 *,*::before,*::after{box-sizing:border-box}
 `;
 		return s;
@@ -670,6 +679,19 @@
 		if (!fabEl) return;
 		fabEl.btn.style.opacity = '0';
 		fabEl.btn.style.transform = 'translateX(60px)';
+	}
+
+	// While a chord is held or a pick mode is running, every click is meant for the
+	// page underneath. Our own chrome — FAB, panel, popover, banners — should never
+	// swallow one just by covering its target, so for the duration it stops being a
+	// hit-test candidate and the element beneath receives the click. The host alone
+	// isn't enough: interactive parts set pointer-events:auto on themselves, which
+	// beats an inherited none, hence the !important rule in shadowStyle().
+	function syncChromeClickThrough() {
+		const on = chordWasActive || !!pickMode;
+		for (const host of document.querySelectorAll('[' + RF_CHROME_ATTR + ']')) {
+			host.toggleAttribute(RF_PASSTHROUGH_ATTR, on);
+		}
 	}
 
 	function hasAnnotations() {
@@ -1245,6 +1267,16 @@
 
 		popoverEl = host;
 		popoverRoot = root;
+		// Lets a chord gesture grow this selection instead of replacing the popover.
+		popoverApi = {
+			addMembers(els) {
+				const fresh = els.filter(m => m?.isConnected && !members.includes(m));
+				if (!fresh.length) { showToast('Already in the selection'); return; }
+				members.push(...fresh);
+				syncSelection();
+				showToast('Added ' + fresh.length + ' element' + (fresh.length === 1 ? '' : 's'));
+			}
+		};
 		// Draws the markers, points live styles at the whole selection and re-applies
 		// any edits carried back from a pick mode.
 		syncSelection();
@@ -1315,6 +1347,7 @@
 
 	function hidePopover() {
 		revertStyles();
+		popoverApi = null;
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		styleTargets = [];
 		styleSnapshot = null;
@@ -1442,6 +1475,24 @@
 			}
 		}
 
+		// Comment-only editing, in place in the card. Used when the annotation's own
+		// element is out of reach: a different page, or gone from this one.
+		function toggleInlineComment(list, idx, a, editBtn) {
+			const card = list.querySelector('.rf-card[data-idx="' + idx + '"]');
+			const cel = card?.querySelector('.rf-comment');
+			if (!cel) return;
+			if (cel.getAttribute('contenteditable') === 'true') {
+				persist(() => { a.comment = cel.textContent.trim(); });
+				showToast('Comment saved');
+				return;
+			}
+			cel.setAttribute('contenteditable', 'true');
+			cel.style.background = '#fff';
+			cel.style.borderLeftColor = '#4a5568';
+			editBtn.textContent = '✓';
+			cel.focus();
+		}
+
 		// Edit/delete delegation
 		list.addEventListener('click', (e) => {
 			const editBtn = e.target.closest('.rf-btn-icon.rf-btn-del') ? null : e.target.closest('.rf-btn-icon');
@@ -1456,8 +1507,13 @@
 				showToast('Deleted');
 				return;
 			}
-			const primary = resolveStoredMember(a);
-			if (!primary) { showToast('Primary element is no longer on this page'); return; }
+			// Reopening the popover only makes sense on the page the annotation was
+			// taken on — the same selector can match an unrelated element elsewhere,
+			// which would silently retarget the annotation. Anywhere else, or when the
+			// element has gone, fall back to editing the comment in place so a comment
+			// is always editable.
+			const primary = a.url === location.href ? resolveStoredMember(a) : null;
+			if (!primary) { toggleInlineComment(list, idx, a, editBtn); return; }
 			const refs = a.targets || [];
 			const found = refs.map(resolveStoredMember);
 			showPopover(primary, capturableEl(primary).data, {
@@ -1561,6 +1617,7 @@
 		if (!outlineEl) {
 			ensureOutlineAnim();
 			outlineEl = document.createElement('div');
+			outlineEl.setAttribute(RF_CHROME_ATTR, '');
 			document.body.appendChild(outlineEl);
 		}
 		if (outlineEl.dataset.rfVariant !== v) {
@@ -1591,6 +1648,7 @@
 		hidePopover();
 		pickMode = { kind, sourceEl, sourceData, draft };
 		document.documentElement.style.cursor = 'crosshair';
+		syncChromeClickThrough();
 		showPickBanner(kind);
 	}
 
@@ -1599,6 +1657,7 @@
 		const { kind, sourceEl, sourceData, draft } = pickMode;
 		pickMode = null;
 		document.documentElement.style.cursor = '';
+		syncChromeClickThrough();
 		hidePickBanner();
 		hideOutline();
 		if (kind === 'member') {
@@ -1672,11 +1731,16 @@
 		if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
 	}
 
+	// Walks out through shadow boundaries as well as up the light tree: composedPath
+	// hands us nodes from inside our own shadow roots, and those must never be
+	// annotatable either.
 	function isRfChrome(el) {
 		if (!el || el.nodeType !== 1) return false;
-		if (fabEl && (el === fabEl.host || fabEl.host.contains(el))) return true;
-		if (popoverEl && (el === popoverEl || popoverEl.contains(el))) return true;
-		if (panelEl && (el === panelEl || panelEl.contains(el))) return true;
+		for (let node = el; node;) {
+			if (node.nodeType === 1 && node.hasAttribute?.(RF_CHROME_ATTR)) return true;
+			const root = node.getRootNode?.();
+			node = root && root.host ? root.host : node.parentElement;
+		}
 		return false;
 	}
 
@@ -1777,6 +1841,7 @@
 		for (const el of els) {
 			const node = document.createElement('div');
 			node.style.cssText = SEL_MARKER_CSS;
+			node.setAttribute(RF_CHROME_ATTR, '');
 			document.body.appendChild(node);
 			selMarkers.push({ el, node });
 		}
@@ -1812,7 +1877,10 @@
 
 	function finishChordGesture(e) {
 		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
-		if (e.target && isRfChrome(e.target)) { clearChordGesture(); return; }
+		// Only meaningful when a pointer released over our chrome. On the keyup path
+		// e.target is whatever holds focus, which is the popover's own textarea
+		// whenever a popover is open — and that must not cancel the gesture.
+		if (e.type !== 'keyup' && e.target && isRfChrome(e.target)) { clearChordGesture(); return; }
 		killEvent(e);
 		const accumulated = chordGesture ? [...chordGesture.accumulated] : [];
 		const alreadyOpened = !!(chordGesture && chordGesture.opened);
@@ -1821,6 +1889,10 @@
 		clearChordGesture();
 		if (alreadyOpened) return;
 		const unique = accumulated.filter((el, i) => accumulated.indexOf(el) === i);
+		// With a popover already open the chord is a continuation, not a fresh start:
+		// growing the selection keeps the draft comment, styles and destination that
+		// replacing it would throw away.
+		if (popoverApi && unique.length) { popoverApi.addMembers(unique); return; }
 		if (unique.length >= 2) {
 			showGroupPopover(unique);
 		} else if (unique.length === 1) {
@@ -1956,12 +2028,14 @@
 		if (IS_CHORD(e)) {
 			if (!e.repeat) revealFab();
 			chordWasActive = true;
+			syncChromeClickThrough();
 		}
 	}, true);
 
 	document.addEventListener('keyup', (e) => {
 		if (chordWasActive && !IS_CHORD(e)) {
 			chordWasActive = false;
+			syncChromeClickThrough();
 			hideOutline();
 			// Chord released: resolve whatever was selected during the hold. One target
 			// opens the normal popover, several open the merged group popover.
