@@ -87,6 +87,13 @@
 		return UTILITY_CLASS_RE.test(cls);
 	}
 
+	// SVG elements expose className as an SVGAnimatedString, so it can't be read as
+	// a string. Callers that hand a raw element's classes to filterClasses go
+	// through here.
+	function classNameOf(el) {
+		return typeof el.className === 'string' ? el.className : '';
+	}
+
 	function filterClasses(classStr) {
 		if (!classStr) return [];
 		const all = classStr.trim().split(/\s+/).filter(Boolean);
@@ -926,16 +933,22 @@
 		// Direct siblings are predictable repeated peers and avoid sweeping unrelated page content.
 		function selectSimilar() {
 			if (similarAdded.length) {
+				// The user may have promoted one of the added siblings to primary, in
+				// which case undo drops it and the popover has to re-seat onto a member
+				// that is still selected — otherwise the saved annotation would describe
+				// an element the user just removed.
+				const droppedPrimary = similarAdded.includes(members[0]);
 				members = members.filter(member => !similarAdded.includes(member));
 				similarAdded = [];
 				similarBtn.textContent = '⧉ Select similar';
-				syncSelection();
+				if (droppedPrimary) setPrimary(members[0]);
+				else syncSelection();
 				showToast('Similar selection undone');
 				return;
 			}
-			const signature = filterClasses(zoomTarget.className).sort().join(' ');
+			const signature = filterClasses(classNameOf(zoomTarget)).sort().join(' ');
 			const allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
-				return candidate.tagName === zoomTarget.tagName && filterClasses(candidate.className).sort().join(' ') === signature;
+				return candidate.tagName === zoomTarget.tagName && filterClasses(classNameOf(candidate)).sort().join(' ') === signature;
 			}).filter(candidate => !members.includes(candidate));
 			const matches = allMatches.slice(0, SIMILAR_MAX);
 			if (!matches.length) { showToast('No similar siblings found'); return; }
