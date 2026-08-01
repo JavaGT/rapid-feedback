@@ -7,7 +7,8 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (aria-label, name, href), shortened to the smallest chain that still resolves uniquely
 - **Chord-hold target preview** — pulsing border outline shows what you're about to click
 - **Element zoom** — ▲/▼ for parent/child and ◀/▶ for siblings; the popover header re-renders so you always see what you're about to capture
-- **Multi-select** — hold chord, click multiple elements (each marked green), release → one popover for the whole set. The selection is an editable list: drop a member, promote one to primary, or `+ Add element` to pick another without starting over. Markers stay on the page the whole time, and a style tweak previews across every selected element
+- **Multi-select** — hold chord, click multiple elements (each marked green), release → one popover for the whole set. The selection is an editable list: drop a member, promote one to primary, `⧉ Select similar` to grab the repeated siblings, or `+ Add element` to pick another. Chord-clicking again with the popover open grows the selection rather than starting over, so the draft survives. Markers stay on the page throughout, and a style tweak previews across every selected element
+- **Chrome that gets out of the way** — while the chord is held or a pick mode is running, everything the tool renders becomes click-through, so the FAB, panel or popover can never swallow a click meant for the element beneath. Nothing the tool renders can itself be annotated
 - **Relocation** — "Pick destination" closes the popover and enters a click-to-select mode; your draft is preserved either way
 - **Tabbed popover** — Comment tab open by default, Styles behind one click; 2-column grid layout for style controls
 - **Live style preview** — edits apply to the page as you type and revert on Cancel/Escape, or stay put when you submit
@@ -21,7 +22,10 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | --- | --- |
 | Chord + click | Annotate that element |
 | Chord + several clicks, then release | One annotation over all of them |
+| Chord + click, popover already open | Add that element to the current selection |
+| `⧉ Select similar` | Add the primary's repeated siblings (capped at 50, one-click undo) |
 | `+ Add element`, then click | Add another element to the current selection |
+| ✎ in the panel | Reopen the selection on the page it came from; edit the comment in place anywhere else |
 | Chord, double-tap | Open/close the panel |
 | `Pick destination`, then click | Record where the element should move to |
 | `Esc` | Cancel destination mode, then close the popover, then close the panel |
