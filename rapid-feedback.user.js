@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    https://scope.javagrant.ac.nz
-// @version      5.3.1
-// @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Grouping, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @version      5.4
+// @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
 // @note         v5.3.1: component chain shows file names instead of full paths
 // @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
 // @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
@@ -69,10 +70,12 @@
 	let fabEl = null;
 	let popoverEl = null;
 	let popoverRoot = null;
-	let targetEl = null;
 	let outlineEl = null;
-	let destPick = null;
-	let styleSnapshot = null;
+	let pickMode = null;
+	// Live style edits apply to every selected element, so both the targets and the
+	// snapshot of what to restore are per-element.
+	let styleTargets = [];
+	let styleSnapshot = null; // Map<Element, {prop: originalInlineValue}>
 	let anchor = null;
 
 	// --- Utility-class detection ---
@@ -399,11 +402,25 @@
 				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
 			}
+			// Every selected element is actionable, so each one gets its own line with
+			// the selector a developer would need — not just a label.
 			if (a.targets && a.targets.length) {
-				lines.push('Group: ' + a.targets.map(t => compactRefLabel(t)).join(', '));
+				lines.push('Group: ' + (a.targets.length + 1) + ' elements (this + ' + a.targets.length + ')');
+				for (const t of a.targets) {
+					const label = compactRefLabel(t);
+					lines.push('  • ' + label);
+					// The label already carries short text; only spell it out when it
+					// was too long to fit and got dropped.
+					const txt = (t.text || '').trim().replace(/\s+/g, ' ');
+					if (txt && !label.includes('"' + txt + '"')) {
+						lines.push('    Text: “' + (txt.length > 80 ? txt.slice(0, 80) + '…' : txt) + '”');
+					}
+					const w = compactAncestorChain(t.selector, 4);
+					if (w) lines.push('    Where: ' + w);
+				}
 			}
 			if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
-				lines.push('Tweak:');
+				lines.push(a.targets?.length ? 'Tweak (all ' + (a.targets.length + 1) + ' elements):' : 'Tweak:');
 				for (const k in a.adjustedStyles) lines.push('  ' + k + ': ' + a.adjustedStyles[k] + ';');
 			}
 			if (i < items.length - 1) lines.push('');
@@ -442,10 +459,14 @@
 					a11y: a.destination.a11y,
 					where: compactAncestorChain(a.destination.selector, 4)
 				} : null,
+				groupSize: a.targets?.length ? a.targets.length + 1 : 1,
 				targets: a.targets ? a.targets.map(t => ({
 					selector: t.selector,
+					tag: t.tag || null,
 					text: t.text || null,
-					a11y: t.a11y
+					a11y: t.a11y || null,
+					where: compactAncestorChain(t.selector) || null,
+					rect: t.rect || null
 				})) : null,
 				hints: extractHints(a)
 			}))
@@ -535,7 +556,16 @@
 .rf-zoom-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px}
 .rf-zoom-row button{padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:13px;color:#2d3748}
 .rf-zoom-tag{font-family:monospace;font-size:10px;color:#718096;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rf-group-list{font-size:10px;color:#718096;margin-bottom:8px;font-family:monospace;max-height:44px;overflow:hidden}
+.rf-sel{margin-bottom:8px}
+.rf-sel-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;color:#718096;margin-bottom:4px}
+.rf-sel-list{max-height:120px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;background:#fff}
+.rf-sel-row{display:flex;align-items:center;gap:2px;padding:3px 4px 3px 6px;border-bottom:1px solid #edf2f7}
+.rf-sel-row:last-child{border-bottom:none}
+.rf-sel-row:hover{background:#edf2f7}
+.rf-sel-row.primary{background:#f0fff4}
+.rf-sel-name{flex:1;min-width:0;font-family:monospace;font-size:10px;color:#2d3748;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-sel-act{border:none;background:0 0;color:#718096;cursor:pointer;font-size:11px;line-height:1;padding:2px 5px;border-radius:3px;flex-shrink:0}
+.rf-sel-act:hover{background:#e2e8f0;color:#2d3748}
 .rf-title{font-weight:600;font-size:12px;color:#2d3748;margin-bottom:2px}
 .rf-sub{font-size:9px;color:#718096;margin-bottom:4px;font-family:monospace;word-break:break-all;max-height:40px;overflow:hidden}
 .rf-source{font-size:10px;color:#2f855a;margin-bottom:4px;font-family:monospace;word-break:break-all}
@@ -655,6 +685,9 @@
 					if (outlineEl) positionOutline(el);
 				}
 			}
+			// Members can move independently of the primary, so they get their own
+			// pass rather than riding on the primary's rect-change guard.
+			if (selMarkers.length) positionSelectionMarkers();
 			anchor.raf = requestAnimationFrame(tick);
 		};
 		anchor.raf = requestAnimationFrame(tick);
@@ -669,7 +702,6 @@
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
 	function showPopover(el, data, initial) {
 		hidePopover();
-		targetEl = el;
 		const { host, root } = createShadowRoot();
 		host.style.cssText = 'all:initial;position:fixed;z-index:2147483644;pointer-events:none';
 		root.appendChild(shadowStyle());
@@ -685,7 +717,12 @@
 		// curData tracks whichever element the popover currently describes, so the
 		// header, the style defaults and the saved annotation never disagree.
 		let curData = data;
-		const isGroup = !!(data.targets && data.targets.length);
+		// The live selection. members[0] is the primary — the element the header, the
+		// zoom row and the annotation record describe; the rest ride along as group
+		// members. Holding live nodes (not frozen refs) is what makes the list
+		// editable: rows can be dropped, promoted or added while the popover is open.
+		let members = (initial?.members?.length ? initial.members : [el]).filter(m => m?.isConnected);
+		if (!members.includes(el)) members.unshift(el);
 		// Assigned once the styles grid exists; zooming re-seeds it.
 		let refreshStyleInputs = () => {};
 
@@ -705,8 +742,8 @@
 		popover.appendChild(quoteEl);
 
 		function renderHeader() {
-			titleEl.textContent = isGroup
-				? 'Group (' + (data.targets.length + 1) + ' elements)'
+			titleEl.textContent = members.length > 1
+				? targetLabel({ ...curData, comment: '' }) + ' +' + (members.length - 1)
 				: targetLabel({ ...curData, comment: '' });
 			if (curData.source?.ref) {
 				sourceEl.style.display = 'block';
@@ -724,15 +761,24 @@
 		}
 		renderHeader();
 
-		// Group member list
-		if (isGroup) {
-			const listEl = document.createElement('div');
-			listEl.className = 'rf-group-list';
-			listEl.textContent = 'with: ' + data.targets.map(t => compactRefLabel(t)).join(', ');
-			popover.appendChild(listEl);
-		}
+		// Selection list \u2014 built below, populated by renderMembers().
+		const selBox = document.createElement('div');
+		selBox.className = 'rf-sel';
+		const selHead = document.createElement('div');
+		selHead.className = 'rf-sel-head';
+		const selCount = document.createElement('span');
+		const addBtn = document.createElement('button');
+		addBtn.className = 'rf-btn rf-btn-sm';
+		addBtn.textContent = '+ Add element';
+		selHead.appendChild(selCount);
+		selHead.appendChild(addBtn);
+		const selList = document.createElement('div');
+		selList.className = 'rf-sel-list';
+		selBox.appendChild(selHead);
+		selBox.appendChild(selList);
+		popover.appendChild(selBox);
 
-		// Zoom row \u2014 walk the tree to retarget. Meaningless for a group, so hidden there.
+		// Zoom row \u2014 walk the tree to retarget. Ambiguous for a group, so hidden there.
 		const zoomRow = document.createElement('div');
 		zoomRow.className = 'rf-zoom-row';
 		const upBtn = document.createElement('button');
@@ -751,25 +797,95 @@
 		zoomTag.className = 'rf-zoom-tag';
 		zoomTag.textContent = compactLabel(zoomTarget);
 
+		function repositionTo(target) {
+			const r = target.getBoundingClientRect();
+			const pos = placePopover(r, POPOVER_W, popover.offsetHeight || 480);
+			host.style.top = pos.top + 'px';
+			host.style.left = pos.left + 'px';
+		}
+
+		// Everything that has to agree with the current selection: the page markers,
+		// which elements live style edits drive, and the list itself. Re-applying the
+		// pending edits after retargeting is what carries a tweak onto a newly added
+		// member and lifts it off one that was just removed.
+		function syncSelection() {
+			members = members.filter(m => m?.isConnected);
+			if (!members.length) { hidePopover(); return; }
+			setSelectionMarkers(members.slice(1));
+			setStyleTargets(members);
+			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
+			renderMembers();
+		}
+
+		function setPrimary(next) {
+			if (!next) return;
+			zoomTarget = next;
+			curData = capturableEl(next).data;
+			zoomTag.textContent = compactLabel(next);
+			syncSelection();
+			refreshStyleInputs();
+			showOutline(next);
+			repositionTo(next);
+		}
+
+		function renderMembers() {
+			selCount.textContent = 'Selection — ' + members.length + (members.length === 1 ? ' element' : ' elements');
+			selList.innerHTML = '';
+			// A one-row list is pure noise; the header already names that element.
+			selList.style.display = members.length > 1 ? 'block' : 'none';
+			zoomRow.style.display = members.length > 1 ? 'none' : 'flex';
+			if (members.length > 1) {
+				members.forEach((m, i) => {
+					const row = document.createElement('div');
+					row.className = 'rf-sel-row' + (i === 0 ? ' primary' : '');
+					const name = document.createElement('span');
+					name.className = 'rf-sel-name';
+					name.textContent = (i === 0 ? '● ' : '○ ') + compactLabel(m);
+					name.title = describeElement(m);
+					row.appendChild(name);
+					if (i > 0) {
+						const star = document.createElement('button');
+						star.className = 'rf-sel-act';
+						star.textContent = '★';
+						star.title = 'Make primary';
+						star.addEventListener('click', () => {
+							members.splice(i, 1);
+							members.unshift(m);
+							setPrimary(m);
+						});
+						row.appendChild(star);
+					}
+					const del = document.createElement('button');
+					del.className = 'rf-sel-act';
+					del.textContent = '×';
+					del.title = 'Remove from selection';
+					del.addEventListener('click', () => {
+						members.splice(i, 1);
+						if (i === 0) setPrimary(members[0]);
+						else syncSelection();
+					});
+					row.appendChild(del);
+					row.addEventListener('mouseenter', () => showOutline(m, i === 0 ? 'target' : 'member'));
+					row.addEventListener('mouseleave', () => showOutline(members[0]));
+					selList.appendChild(row);
+				});
+			}
+			renderHeader();
+		}
+
+		addBtn.addEventListener('click', () => {
+			revertStyles();
+			enterPick('member', zoomTarget, curData, currentDraft());
+		});
+
 		// Retargeting resets style edits: they belong to the element they were made
 		// against, so we put that one back before moving on.
 		function setZoomTarget(next) {
 			if (!next || next === zoomTarget) return;
 			revertStyles();
 			for (const k in adjustedStyles) delete adjustedStyles[k];
-			zoomTarget = next;
-			targetEl = next;
-			styleSnapshot = {};
-			curData = capturableEl(next).data;
-			if (isGroup) curData.targets = data.targets;
-			zoomTag.textContent = compactLabel(zoomTarget);
-			renderHeader();
-			refreshStyleInputs();
-			showOutline(zoomTarget);
-			const r = zoomTarget.getBoundingClientRect();
-			const pos = placePopover(r, POPOVER_W, popover.offsetHeight || 480);
-			host.style.top = pos.top + 'px';
-			host.style.left = pos.left + 'px';
+			members[0] = next;
+			setPrimary(next);
 		}
 
 		upBtn.addEventListener('click', () => {
@@ -784,7 +900,7 @@
 		zoomRow.appendChild(prevBtn);
 		zoomRow.appendChild(nextBtn);
 		zoomRow.appendChild(zoomTag);
-		if (!isGroup) popover.appendChild(zoomRow);
+		popover.appendChild(zoomRow);
 
 		// Tab row
 		const tabRow = document.createElement('div');
@@ -846,17 +962,21 @@
 			destClear.style.display = 'none';
 			destBtn.textContent = 'Pick destination';
 		});
-		destBtn.addEventListener('click', () => {
-			// Snapshot the draft, close the popover, and enter destination-select mode.
-			// Reopen against the zoomed element so retargeting isn't lost.
-			const draft = {
+		// Everything the popover would lose by closing for a pick mode. Reopening
+		// against the zoomed element means retargeting isn't lost either.
+		function currentDraft() {
+			return {
 				comment: ta.value,
 				category: selCat,
 				adjustedStyles: { ...adjustedStyles },
 				destination: destData,
+				members: [...members],
 			};
+		}
+
+		destBtn.addEventListener('click', () => {
 			revertStyles();
-			enterDestPick(zoomTarget, curData, draft);
+			enterPick('destination', zoomTarget, curData, currentDraft());
 		});
 		destRow.appendChild(destBtn);
 		destRow.appendChild(destTag);
@@ -927,8 +1047,7 @@
 		resetBtn.textContent = 'Reset';
 		resetBtn.style.cssText = 'margin-top:6px';
 		resetBtn.addEventListener('click', () => {
-			revertStyles();
-			styleSnapshot = {};
+			setStyleTargets(styleTargets);
 			for (const k in adjustedStyles) delete adjustedStyles[k];
 			refreshStyleInputs();
 			showToast('Styles reset');
@@ -953,6 +1072,11 @@
 		});
 
 		// Actions
+		// The non-primary members, frozen into the shape the export and storage use.
+		function memberRefs() {
+			return members.length > 1 ? members.slice(1).map(captureMemberRef) : null;
+		}
+
 		function submit() {
 			let comment = ta.value.trim();
 			if (Object.keys(adjustedStyles).length) {
@@ -967,6 +1091,7 @@
 				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
 				destination: destData,
+				targets: memberRefs(),
 			};
 			persist(() => { annotations.push(makeAnnotation(annotationData)); });
 			keepStyles();
@@ -991,6 +1116,7 @@
 				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
 				destination: destData,
+				targets: memberRefs(),
 			});
 			copyText(toMarkdown([ann]));
 			hidePopover();
@@ -1021,44 +1147,63 @@
 
 		popoverEl = host;
 		popoverRoot = root;
-		styleSnapshot = {};
-		// Re-apply any style edits carried back from destination-select mode.
-		for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
+		// Draws the markers, points live styles at the whole selection and re-applies
+		// any edits carried back from a pick mode.
+		syncSelection();
 		startAnchor(host, () => zoomTarget);
 		ta.focus();
 	}
 
-	// A group is just the multi-target case of an annotation, so it reuses the same
+	// A group is just the multi-member case of an annotation, so it reuses the same
 	// popover — which gets it styles, destination and Cut for free.
 	function showGroupPopover(targets) {
 		if (!targets || targets.length < 2) return;
-		const primary = targets[0];
-		const data = capturableEl(primary).data;
-		data.targets = targets.slice(1).map(t => ({
-			selector: describeElement(t),
-			text: getTextSnippet(t),
-			a11y: getA11y(t)
-		}));
-		showPopover(primary, data);
+		showPopover(targets[0], capturableEl(targets[0]).data, { members: [...targets] });
+	}
+
+	// A selected element, frozen into the shape exports and storage read.
+	function captureMemberRef(el) {
+		return {
+			selector: describeElement(el),
+			tag: el.tagName.toLowerCase(),
+			text: getTextSnippet(el),
+			a11y: getA11y(el),
+			rect: getBoundingRect(el),
+		};
 	}
 
 	// Live style edits mutate the page. Remember each property's original inline
 	// value the first time we touch it so we can put the page back if the user
 	// walks away without saving.
 	function applyStyle(prop, val, adjustedStyles) {
-		if (targetEl && styleSnapshot && !(prop in styleSnapshot)) {
-			styleSnapshot[prop] = targetEl.style.getPropertyValue(prop);
+		if (!val) delete adjustedStyles[prop];
+		else adjustedStyles[prop] = val;
+		for (const el of styleTargets) {
+			if (styleSnapshot) {
+				let snap = styleSnapshot.get(el);
+				if (!snap) { snap = {}; styleSnapshot.set(el, snap); }
+				if (!(prop in snap)) snap[prop] = el.style.getPropertyValue(prop);
+			}
+			if (!val) el.style.removeProperty(prop);
+			else el.style.setProperty(prop, val);
 		}
-		if (!val) { delete adjustedStyles[prop]; if (targetEl) targetEl.style.removeProperty(prop); }
-		else { adjustedStyles[prop] = val; if (targetEl) targetEl.style.setProperty(prop, val); }
+	}
+
+	// Point live editing at a new set of elements, putting the previous set back
+	// first. Callers re-apply the pending edits afterwards if they still want them.
+	function setStyleTargets(els) {
+		revertStyles();
+		styleTargets = els.slice();
+		styleSnapshot = new Map();
 	}
 
 	function revertStyles() {
-		if (!targetEl || !styleSnapshot) return;
-		for (const prop in styleSnapshot) {
-			const orig = styleSnapshot[prop];
-			if (orig) targetEl.style.setProperty(prop, orig);
-			else targetEl.style.removeProperty(prop);
+		if (!styleSnapshot) return;
+		for (const [el, snap] of styleSnapshot) {
+			for (const prop in snap) {
+				if (snap[prop]) el.style.setProperty(prop, snap[prop]);
+				else el.style.removeProperty(prop);
+			}
 		}
 		styleSnapshot = null;
 	}
@@ -1067,14 +1212,16 @@
 	// user can keep looking at what they just described.
 	function keepStyles() {
 		styleSnapshot = null;
+		styleTargets = [];
 	}
 
 	function hidePopover() {
 		revertStyles();
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
-		targetEl = null;
+		styleTargets = [];
 		styleSnapshot = null;
 		hideOutline();
+		clearSelectionMarkers();
 		stopAnchor();
 	}
 
@@ -1149,6 +1296,13 @@
 					cat.className = 'rf-card-cat';
 					cat.textContent = catLabel;
 					titleRow.appendChild(cat);
+				}
+				if (a.targets?.length) {
+					const g = document.createElement('span');
+					g.className = 'rf-card-cat';
+					g.textContent = '⧉ ' + (a.targets.length + 1);
+					g.title = a.targets.map(t => compactRefLabel(t)).join(', ');
+					titleRow.appendChild(g);
 				}
 				left.appendChild(titleRow);
 				if (a.source?.ref) {
@@ -1297,6 +1451,7 @@
 	const OUTLINE_VARIANTS = {
 		target: 'border:2px solid #4a5568;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(74,85,104,0.15)',
 		dest: 'border:2px dashed #2b6cb0;box-shadow:0 0 0 4px rgba(43,108,176,0.18)',
+		member: 'border:2px solid #2f855a;box-shadow:0 0 0 4px rgba(47,133,90,0.18)',
 	};
 
 	function ensureOutlineAnim() {
@@ -1334,38 +1489,45 @@
 		if (outlineEl) { outlineEl.remove(); outlineEl = null; }
 	}
 
-	// --- Destination-select mode ---
-	// Pick destination closes the popover and puts the page into a plain-click
-	// selection mode: no chord needed, next left click picks the destination,
+	// --- Pick modes ---
+	// "Pick destination" and "+ Add element" both close the popover and put the page
+	// into a plain-click selection mode: no chord needed, next left click picks,
 	// Escape cancels. Either way the draft popover is restored afterwards.
-	function enterDestPick(sourceEl, sourceData, draft) {
+	function enterPick(kind, sourceEl, sourceData, draft) {
 		hidePopover();
-		destPick = { sourceEl, sourceData, draft };
+		pickMode = { kind, sourceEl, sourceData, draft };
 		document.documentElement.style.cursor = 'crosshair';
-		showDestBanner();
+		showPickBanner(kind);
 	}
 
-	function exitDestPick(destination) {
-		if (!destPick) return;
-		const { sourceEl, sourceData, draft } = destPick;
-		destPick = null;
+	function exitPick(result) {
+		if (!pickMode) return;
+		const { kind, sourceEl, sourceData, draft } = pickMode;
+		pickMode = null;
 		document.documentElement.style.cursor = '';
-		hideDestBanner();
+		hidePickBanner();
 		hideOutline();
-		showPopover(sourceEl, sourceData, { ...draft, destination: destination || draft.destination });
-		if (destination) showToast('Destination set');
+		if (kind === 'member') {
+			if (result) draft.members = [...(draft.members || [sourceEl]), result];
+			showPopover(sourceEl, sourceData, draft);
+			if (result) showToast('Added to selection');
+		} else {
+			showPopover(sourceEl, sourceData, { ...draft, destination: result || draft.destination });
+			if (result) showToast('Destination set');
+		}
 	}
 
-	let destBannerEl = null;
+	let pickBannerEl = null;
 
-	function showDestBanner() {
-		hideDestBanner();
+	function showPickBanner(kind) {
+		hidePickBanner();
+		const isMember = kind === 'member';
 		const { host, root } = createShadowRoot();
 		host.style.cssText = 'all:initial;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
 		s.textContent = `
-.rf-banner{background:#2b6cb0;color:#fff;padding:8px 14px;border-radius:6px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;gap:10px;align-items:center}
+.rf-banner{background:${isMember ? '#2f855a' : '#2b6cb0'};color:#fff;padding:8px 14px;border-radius:6px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;gap:10px;align-items:center}
 .rf-banner b{font-weight:600}
 .rf-banner span{opacity:0.85}
 `;
@@ -1373,17 +1535,17 @@
 		const b = document.createElement('div');
 		b.className = 'rf-banner';
 		const strong = document.createElement('b');
-		strong.textContent = 'Click the destination element';
+		strong.textContent = isMember ? 'Click an element to add to the selection' : 'Click the destination element';
 		const hint = document.createElement('span');
 		hint.textContent = 'Esc to cancel';
 		b.appendChild(strong);
 		b.appendChild(hint);
 		root.appendChild(b);
-		destBannerEl = host;
+		pickBannerEl = host;
 	}
 
-	function hideDestBanner() {
-		if (destBannerEl) { destBannerEl.remove(); destBannerEl = null; }
+	function hidePickBanner() {
+		if (pickBannerEl) { pickBannerEl.remove(); pickBannerEl = null; }
 	}
 
 	function destTargetFrom(e) {
@@ -1490,15 +1652,15 @@
 		const accumulated = chordGesture.accumulated;
 		if (!accumulated.includes(target)) {
 			accumulated.push(target);
-			// Without a marker there's no way to tell that a multi-select is building.
-			markGroupTarget(target);
+			// Without markers there's no way to tell that a multi-select is building.
+			setSelectionMarkers(accumulated);
 		}
 		chordGesture.armedAt = performance.now();
 	}
 
 	function clearChordGesture() {
 		chordGesture = null;
-		clearGroupMarkers();
+		clearSelectionMarkers();
 	}
 
 	function isLiveChordGesture() {
@@ -1510,21 +1672,40 @@
 		return true;
 	}
 
-	// --- Group selection markers ---
-	let groupMarkers = [];
+	// --- Selection markers ---
+	// Green overlays over the non-primary members of the selection. Used while the
+	// chord gesture accumulates clicks and again while the popover is open, so the
+	// set you are about to annotate stays visible the whole way through.
+	let selMarkers = [];
 
-	function markGroupTarget(el) {
-		const r = el.getBoundingClientRect();
-		const m = document.createElement('div');
-		m.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483645;border:2px solid #2f855a;border-radius:2px;background:rgba(47,133,90,0.08);top:'
-			+ r.top + 'px;left:' + r.left + 'px;width:' + r.width + 'px;height:' + r.height + 'px';
-		document.body.appendChild(m);
-		groupMarkers.push(m);
+	function setSelectionMarkers(els) {
+		clearSelectionMarkers();
+		for (const el of els) {
+			const node = document.createElement('div');
+			node.style.cssText = SEL_MARKER_CSS;
+			document.body.appendChild(node);
+			selMarkers.push({ el, node });
+		}
+		positionSelectionMarkers();
 	}
 
-	function clearGroupMarkers() {
-		for (const m of groupMarkers) m.remove();
-		groupMarkers = [];
+	const SEL_MARKER_CSS = 'position:fixed;pointer-events:none;z-index:2147483645;border:2px solid #2f855a;border-radius:2px;background:rgba(47,133,90,0.08)';
+
+	function positionSelectionMarkers() {
+		for (const { el, node } of selMarkers) {
+			if (!el.isConnected) { node.style.display = 'none'; continue; }
+			const r = el.getBoundingClientRect();
+			node.style.display = 'block';
+			node.style.top = r.top + 'px';
+			node.style.left = r.left + 'px';
+			node.style.width = r.width + 'px';
+			node.style.height = r.height + 'px';
+		}
+	}
+
+	function clearSelectionMarkers() {
+		for (const { node } of selMarkers) node.remove();
+		selMarkers = [];
 	}
 
 	const CAPTURE = { capture: true, passive: false };
@@ -1562,21 +1743,26 @@
 	// stopImmediatePropagation here keeps the chord handlers out of it entirely.
 	for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'auxclick']) {
 		document.addEventListener(type, (e) => {
-			if (!destPick) return;
+			if (!pickMode) return;
 			if (isRfChrome(e.target)) return;
 			killEvent(e);
 		}, CAPTURE);
 	}
 
 	document.addEventListener('click', (e) => {
-		if (!destPick) return;
+		if (!pickMode) return;
 		if (isRfChrome(e.target)) return;
 		killEvent(e);
 		if (e.button != null && e.button !== 0) return;
 		const target = destTargetFrom(e);
 		if (!target) return;
-		if (target === destPick.sourceEl) { showToast('That is the source element'); return; }
-		exitDestPick(captureDestination(target));
+		if (pickMode.kind === 'member') {
+			if ((pickMode.draft.members || []).includes(target)) { showToast('Already selected'); return; }
+			exitPick(target);
+			return;
+		}
+		if (target === pickMode.sourceEl) { showToast('That is the source element'); return; }
+		exitPick(captureDestination(target));
 	}, CAPTURE);
 
 	// Chord-hold: show outline on mousemove. Hit-testing plus a rect read per event
@@ -1589,9 +1775,9 @@
 		const e = hoverEvent;
 		hoverEvent = null;
 		if (!e) return;
-		if (destPick) {
+		if (pickMode) {
 			const target = destTargetFrom(e);
-			if (target) showOutline(target, 'dest');
+			if (target) showOutline(target, pickMode.kind === 'member' ? 'member' : 'dest');
 			return;
 		}
 		if (!IS_CHORD(e)) return hideOutline();
@@ -1669,7 +1855,7 @@
 
 	document.addEventListener('keydown', (e) => {
 		if (e.key === 'Escape') {
-			if (destPick) { killEvent(e); exitDestPick(null); return; }
+			if (pickMode) { killEvent(e); exitPick(null); return; }
 			if (popoverEl) { hidePopover(); return; }
 			if (panelEl && panelEl.style.display !== 'none') { closePanel(); return; }
 		}
