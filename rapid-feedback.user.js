@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.12
+// @version      5.13
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
 // @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
 // @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
 // @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
@@ -222,10 +223,22 @@
 	}
 
 	// --- Svelte source location ---
+	// __svelte_meta is page-owned: a hostile page can define throwing getters on
+	// it, so every read is guarded. The .parent chain is Svelte-internal, not a
+	// stable API — traversal fails soft and is capped.
+	function readSvelteMeta(node) {
+		try {
+			const meta = node && node.__svelte_meta;
+			if (meta && meta.loc && meta.loc.file) return meta;
+		} catch {}
+		return null;
+	}
+
 	function findSvelteMetaEl(el) {
 		let cur = el;
-		while (cur && cur.nodeType === 1) {
-			if (cur.__svelte_meta?.loc?.file) return cur;
+		let guard = 0;
+		while (cur && cur.nodeType === 1 && guard++ < 50) {
+			if (readSvelteMeta(cur)) return cur;
 			cur = cur.parentElement;
 		}
 		return null;
@@ -244,22 +257,44 @@
 		return norm.slice(norm.lastIndexOf('/') + 1);
 	}
 
+	// SvelteKit route files all share generic basenames (+page.svelte and kin), so
+	// a bare basename is ambiguous — prefix the distinguishing parent directory.
+	const GENERIC_ROUTE_FILE_RE = /^\+(?:page|layout|error|server)(?:\..+)?\.svelte$/;
+
+	function frameRef(file, line) {
+		const base = baseName(file);
+		if (!base) return '';
+		const suffix = line ? ':' + line : '';
+		if (!GENERIC_ROUTE_FILE_RE.test(base)) return base + suffix;
+		const parts = String(file).replace(/\\/g, '/').split('/');
+		const dir = parts[parts.length - 2];
+		return (dir ? dir + '/' : '') + base + suffix;
+	}
+
+	// "Is this a Svelte app at all?" heuristic via scoped classes. Not cached:
+	// Svelte content can mount long after first capture on SPAs.
+	function looksLikeSvelte() {
+		try { return document.querySelector('[class*="svelte-"]') !== null; } catch { return false; }
+	}
+
 	function getSourceLoc(el) {
 		const metaEl = findSvelteMetaEl(el);
-		if (!metaEl) return null;
-		const loc = metaEl.__svelte_meta.loc;
+		if (!metaEl) {
+			// No dev metadata. If the page still smells like Svelte, say why instead
+			// of going quiet — reviewers otherwise assume the tool is broken.
+			return looksLikeSvelte() ? { status: 'svelte-production-build' } : null;
+		}
+		const meta = readSvelteMeta(metaEl);
+		const loc = meta.loc;
 		const file = relSourceFile(loc.file);
 		const stack = [];
-		let node = metaEl.__svelte_meta.parent;
+		let node = meta.parent;
 		let guard = 0;
 		while (node && guard++ < 12) {
-			if (node.file) {
-				stack.push({
-					type: node.type || 'component',
-					ref: baseName(node.file) + (node.line ? ':' + node.line : '')
-				});
-			}
-			node = node.parent;
+			let f, ln, tp;
+			try { f = node.file; ln = node.line; tp = node.type; } catch {}
+			if (f) stack.push({ type: tp || 'component', ref: frameRef(f, ln) });
+			try { node = node.parent; } catch { node = null; }
 		}
 		return {
 			file,
@@ -269,6 +304,20 @@
 			viaAncestor: metaEl !== el,
 			componentStack: stack.length ? stack : null
 		};
+	}
+
+	// Optional editor deep links: setProjectRoot('/abs/path/to/repo') makes
+	// exports carry clickable vscode:// links with line and column.
+	let projectRoot = '';
+	function setProjectRoot(path) {
+		projectRoot = String(path || '').replace(/\\/g, '/').replace(/\/+$/, '');
+	}
+
+	function editorUrlFor(file, line, column) {
+		if (!projectRoot || !file) return null;
+		const rel = String(file).replace(/^\.\//, '');
+		const abs = rel.startsWith('/') ? rel : projectRoot + '/' + rel;
+		return 'vscode://file' + encodeURI(abs) + ':' + (line || 1) + (column ? ':' + column : '');
 	}
 
 	function getA11y(el) {
@@ -444,6 +493,10 @@
 			if (a.source?.ref) {
 				lines.push('Source: ' + a.source.ref + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
 				if (a.source.componentStack?.length) lines.push('Component: ' + a.source.componentStack.map(s => s.ref).join(' \u2190 '));
+				const eu = editorUrlFor(a.source.file, a.source.line, a.source.column);
+				if (eu) lines.push('Open: ' + eu);
+			} else if (a.source?.status === 'svelte-production-build') {
+				lines.push('Source: unavailable \u2014 Svelte production build (dev mode required for file mapping)');
 			}
 			if (a.a11y) {
 				const bits = [];
@@ -476,6 +529,11 @@
 					}
 					const w = compactAncestorChain(t.selector, 4);
 					if (w) lines.push('    Where: ' + w);
+					if (t.source?.ref) {
+						lines.push('    Source: ' + t.source.ref);
+						const eu = editorUrlFor(t.source.file, t.source.line, t.source.column);
+						if (eu) lines.push('    Open: ' + eu);
+					}
 				}
 			}
 			if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
@@ -506,6 +564,7 @@
 				text: a.text || null,
 				label: targetLabel(a),
 				source: a.source || null,
+				editorUrl: a.source?.ref ? editorUrlFor(a.source.file, a.source.line, a.source.column) : null,
 				a11y: a.a11y || null,
 				selector: a.selector || null,
 				where: compactAncestorChain(a.selector) || null,
@@ -525,7 +584,9 @@
 					text: t.text || null,
 					a11y: t.a11y || null,
 					where: compactAncestorChain(t.selector) || null,
-					rect: t.rect || null
+					rect: t.rect || null,
+					source: t.source || null,
+					editorUrl: t.source?.ref ? editorUrlFor(t.source.file, t.source.line, t.source.column) : null
 				})) : null,
 				hints: extractHints(a)
 			}))
@@ -846,7 +907,7 @@
 				: targetLabel({ ...curData, comment: '' });
 			if (curData.source?.ref) {
 				sourceEl.style.display = 'block';
-				sourceEl.textContent = '\u25CE ' + curData.source.ref + (curData.source.viaAncestor ? ' (ancestor)' : '');
+				sourceEl.textContent = '◈ ' + frameRef(curData.source.file) + ' · ' + curData.source.ref + (curData.source.viaAncestor ? ' (ancestor)' : '');
 			} else {
 				sourceEl.style.display = 'none';
 			}
@@ -1002,6 +1063,15 @@
 		}
 
 		// Direct siblings are predictable repeated peers and avoid sweeping unrelated page content.
+		// When the primary carries its own Svelte dev metadata, siblings rendered by
+		// the same component file are a stronger signal than tag+class — but only
+		// elements with their OWN metadata count (inherited/viaAncestor would sweep
+		// in shared wrappers), and we fall back to the class signature otherwise.
+		function directSvelteFile(el) {
+			const meta = readSvelteMeta(el);
+			return meta ? meta.loc.file : null;
+		}
+
 		function selectSimilar() {
 			if (similarAdded.length) {
 				// The user may have promoted one of the added siblings to primary, in
@@ -1017,17 +1087,27 @@
 				showToast('Similar selection undone');
 				return;
 			}
-			const signature = filterClasses(classNameOf(zoomTarget)).sort().join(' ');
-			const allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
-				return candidate.tagName === zoomTarget.tagName && filterClasses(classNameOf(candidate)).sort().join(' ') === signature;
-			}).filter(candidate => !members.includes(candidate));
+			const directFile = directSvelteFile(zoomTarget);
+			let allMatches;
+			if (directFile) {
+				allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
+					if (candidate === zoomTarget) return false;
+					const f = directSvelteFile(candidate);
+					return f && f === directFile;
+				});
+			} else {
+				const signature = filterClasses(classNameOf(zoomTarget)).sort().join(' ');
+				allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
+					return candidate.tagName === zoomTarget.tagName && filterClasses(classNameOf(candidate)).sort().join(' ') === signature;
+				}).filter(candidate => !members.includes(candidate));
+			}
 			const matches = allMatches.slice(0, SIMILAR_MAX);
 			if (!matches.length) { showToast('No similar siblings found'); return; }
 			similarAdded = matches;
 			members.push(...matches);
 			similarBtn.textContent = 'Undo similar selection';
 			syncSelection();
-			showToast('Added ' + matches.length + ' similar element' + (matches.length === 1 ? '' : 's') + (allMatches.length > SIMILAR_MAX ? ' (capped at ' + SIMILAR_MAX + ')' : ''));
+			showToast('Added ' + matches.length + ' similar element' + (matches.length === 1 ? '' : 's') + (directFile ? ' by component' : '') + (allMatches.length > SIMILAR_MAX ? ' (capped at ' + SIMILAR_MAX + ')' : ''));
 		}
 
 		similarBtn.addEventListener('click', selectSimilar);
@@ -1347,6 +1427,7 @@
 			text: getTextSnippet(el),
 			a11y: getA11y(el),
 			rect: getBoundingRect(el),
+			source: getSourceLoc(el),
 		};
 	}
 
@@ -2164,6 +2245,7 @@
 		get annotations() { return annotations; },
 		clear() { annotations = []; save(); },
 		openPanel() { openPanel(); },
+		setProjectRoot,
 	};
 
 	// --- Init ---

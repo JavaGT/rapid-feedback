@@ -136,6 +136,85 @@ module.exports = async function run() {
   });
   check('selector skips variant/arbitrary classes', /#c5/.test(utilSel) && !/[:\[]/.test(utilSel) && /btnPrimary/.test(utilSel), utilSel);
 
+  // --- v5.13: Svelte source mapping (fake __svelte_meta, no build chain) ---
+  await page.evaluate(() => {
+    const mk = (el, file, line, col) => { el.__svelte_meta = { loc: { file, line, column: col } }; };
+    mk(document.getElementById('c1'), '/repo/src/lib/Card.svelte', 42, 8);
+    document.getElementById('c1').__svelte_meta.parent =
+      { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null };
+    mk(document.getElementById('c2'), '/repo/src/lib/Card.svelte', 42, 8);
+    mk(document.getElementById('c3'), '/repo/src/lib/Other.svelte', 9, 0);
+    window.__SCOPE_FEEDBACK_API__.setProjectRoot('/repo');
+  });
+
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c1');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => { const p = ${POP};
+    p.querySelector('.rf-popover-ta').value = 'svelte check';
+    p.querySelector('.rf-btn-primary').click();
+  })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const sv = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    const a = api.annotations[api.annotations.length - 1];
+    return { ref: a.source && a.source.ref, stack0: a.source && a.source.componentStack && a.source.componentStack[0].ref, md: api.markdown() };
+  });
+  check('svelte source maps file:line + route-aware stack',
+    sv.ref === 'src/lib/Card.svelte:42' && sv.stack0 === 'projects/+page.svelte:15',
+    JSON.stringify({ ref: sv.ref, stack0: sv.stack0 }));
+  check('editor deep link carries root, line and column',
+    sv.md.includes('vscode://file/repo/src/lib/Card.svelte:42:8'),
+    sv.md.split('\n').filter(l => l.includes('vscode')).join(' | '));
+
+  // Select similar must group by component file: c2 shares Card.svelte, c3/c4/c5 don't.
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c1');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => { const p = ${POP};
+    [...p.querySelectorAll('.rf-btn-sm')].find(b => /similar/i.test(b.textContent)).click();
+  })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const simRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
+  check('select similar groups by component file', simRows === 2, 'rows=' + simRows + ' (signature fallback would sweep all cards)');
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 150));
+
+  // Hostile page: a throwing __svelte_meta getter must not break capture.
+  await page.evaluate(() => {
+    Object.defineProperty(document.getElementById('c1'), '__svelte_meta', { get() { throw new Error('boom'); }, configurable: true });
+  });
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c1');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  const hostilePop = await page.evaluate(`(() => { const p = ${POP}; return !!p; })()`);
+  check('hostile __svelte_meta getter fails soft', hostilePop, '');
+  await page.keyboard.press('Escape');
+  await new Promise(r => setTimeout(r, 150));
+
+  // Svelte-looking page without dev metadata → explicit disclosure, not silence.
+  await page.evaluate(() => { document.body.classList.add('svelte-probe-class'); });
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c4');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => { const p = ${POP};
+    p.querySelector('.rf-popover-ta').value = 'disclosure check';
+    p.querySelector('.rf-btn-primary').click();
+  })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const disc = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    const a = api.annotations[api.annotations.length - 1];
+    return { status: a.source && a.source.status, md: api.markdown() };
+  });
+  check('prod-build disclosure when dev meta absent',
+    disc.status === 'svelte-production-build' && disc.md.includes('Svelte production build'),
+    String(disc.status));
+
 	return finish();
 	});
 };
