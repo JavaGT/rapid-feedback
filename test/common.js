@@ -4,7 +4,7 @@ const path = require('path');
 
 const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
 const CHROME = process.env.RAPID_FEEDBACK_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const POP = `(() => { for (const h of document.body.children) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
+const POP = `(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
 
 function createReporter() {
 	const results = [];

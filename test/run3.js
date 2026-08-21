@@ -9,7 +9,7 @@ module.exports = async function run() {
 		await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'editable'; p.querySelector('.rf-btn-primary').click(); })()`);
 		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
 		await page.evaluate(() => {
-			const root = [...document.body.children].find(h => h.shadowRoot?.querySelector('.rf-panel')).shadowRoot;
+			const root = [...document.body.children, ...document.documentElement.children].find(h => h.shadowRoot?.querySelector('.rf-panel')).shadowRoot;
 			root.querySelector('.rf-btn-icon[data-idx="0"]').click();
 		});
 		await new Promise(r => setTimeout(r, 100));
@@ -24,7 +24,7 @@ module.exports = async function run() {
 		await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'group'; p.querySelector('.rf-btn-primary').click(); })()`);
 		await page.evaluate(() => { document.getElementById('c2').remove(); window.__SCOPE_FEEDBACK_API__.openPanel(); });
 		await page.evaluate(() => {
-			const root = [...document.body.children].find(h => h.shadowRoot?.querySelector('.rf-panel')).shadowRoot;
+			const root = [...document.body.children, ...document.documentElement.children].find(h => h.shadowRoot?.querySelector('.rf-panel')).shadowRoot;
 			root.querySelector('.rf-btn-icon[data-idx="1"]').click();
 		});
 		state = await page.evaluate(`(() => { const p = ${POP}; return { status: p?.querySelector('.rf-sel-status')?.textContent, missing: p?.querySelector('.rf-sel-row.missing')?.textContent }; })()`);

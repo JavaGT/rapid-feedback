@@ -78,7 +78,7 @@ module.exports = async function run() {
   await page.evaluate(`(() => { const p = ${POP}; [...p.querySelectorAll('.rf-btn-sm')].find(b => b.textContent.includes('Add')).click(); })()`);
   await new Promise(r => setTimeout(r, 100));
   const banner = await page.evaluate(() => {
-    for (const h of document.body.children) { const b = h.shadowRoot?.querySelector('.rf-banner'); if (b) return b.textContent; }
+    for (const h of [...document.body.children, ...document.documentElement.children]) { const b = h.shadowRoot?.querySelector('.rf-banner'); if (b) return b.textContent; }
     return null;
   });
   check('add-element banner shown', /add to the selection/i.test(banner || ''), String(banner));
@@ -117,6 +117,24 @@ module.exports = async function run() {
   });
   console.log('\n--- API keys: ' + JSON.stringify(out.apiKeys) + ' ---');
   if (md) console.log('--- MARKDOWN ---\n' + md + '\n----------------');
+
+  // --- v5.12: framework-noise classes stay out of selectors ---
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c5');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => {
+    const p = ${POP};
+    const ta = p.querySelector('.rf-popover-ta');
+    ta.value = 'utility check';
+    p.querySelector('.rf-btn-primary').click();
+  })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const utilSel = await page.evaluate(() => {
+    const a = window.__SCOPE_FEEDBACK_API__.annotations;
+    return a[a.length - 1].selector;
+  });
+  check('selector skips variant/arbitrary classes', /#c5/.test(utilSel) && !/[:\[]/.test(utilSel) && /btnPrimary/.test(utilSel), utilSel);
 
 	return finish();
 	});

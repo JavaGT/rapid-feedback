@@ -47,7 +47,7 @@ module.exports = async function run() {
     p.querySelector('.rf-popover-ta').value = 'move these';
     [...p.querySelectorAll('.rf-btn')].find(b => /destination/i.test(b.textContent)).click(); })()`);
   await new Promise(r => setTimeout(r, 150));
-  const banner = await page.evaluate(() => { for (const h of document.body.children) { const b = h.shadowRoot?.querySelector('.rf-banner'); if (b) return b.textContent; } return null; });
+  const banner = await page.evaluate(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const b = h.shadowRoot?.querySelector('.rf-banner'); if (b) return b.textContent; } return null; });
   check('destination banner shown', /destination element/i.test(banner || ''), String(banner));
   await chordClick('#c4');
   await new Promise(r => setTimeout(r, 250));

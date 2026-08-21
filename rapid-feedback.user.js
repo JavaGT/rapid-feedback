@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.11
+// @version      5.12
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
 // @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
 // @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
 // @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
@@ -96,7 +97,16 @@
 	const UTILITY_CLASS_RE = /^(p|m)(t|r|b|l|x|y|s|e)?-\d+|^(w|h|min-w|min-h|max-w|max-h)-\d+|^(text|font|leading|tracking|rounded|border|bg|shadow|opacity|z|flex|grid|gap|items|justify|self|order|overflow|object|top|right|bottom|left|inset|ring|outline|decoration|underline|line-through|no-underline|uppercase|lowercase|capitalize|normal-case|truncate|italic|not-italic|font|antialiased|subpixel-antialiased|align|break|whitespace|list|sr-only|invisible|visible|static|fixed|absolute|relative|sticky|block|inline|flow-root|contents|hidden|isolate|float|clear|container|columns|aspect|basis|grow|shrink)/;
 
 	function isUtilityClass(cls) {
-		return UTILITY_CLASS_RE.test(cls);
+		if (!cls) return true;
+		// Svelte scope hashes churn per build; never anchor selectors on them.
+		if (/^svelte-[a-z0-9]+$/i.test(cls)) return true;
+		// CamelCase reads hand-written; keep it as signal.
+		if (/[A-Z]/.test(cls)) return false;
+		// Variant prefixes (hover:pt-2), arbitrary values (w-[37px]) and fractions
+		// (w-1/2) are framework noise whatever their stem.
+		if (/[:[\]/]/.test(cls)) return true;
+		// Negative utilities (-mt-2): judge the unsigned form.
+		return UTILITY_CLASS_RE.test(cls[0] === '-' ? cls.slice(1) : cls);
 	}
 
 	// SVG elements expose className as an SVGAnimatedString, so it can't be read as
@@ -579,7 +589,9 @@
 		// comments are none of the host page's business. Everything that needs the
 		// root later holds its own reference.
 		const root = host.attachShadow({ mode: 'closed' });
-		document.body.appendChild(host);
+		// Hosted on <html>, not <body>: SPA frameworks routinely wipe body children
+		// during hydration, and our chrome should survive that.
+		document.documentElement.appendChild(host);
 		return { host, root };
 	}
 
@@ -703,7 +715,6 @@
 			else openPanel();
 		});
 		root.appendChild(btn);
-		document.body.appendChild(host);
 		fabEl = { host, root, btn };
 	}
 
@@ -1295,7 +1306,6 @@
 		ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); }, true);
 
 		root.appendChild(popover);
-		document.body.appendChild(host);
 
 		const rect = el.getBoundingClientRect();
 		const pos = placePopover(rect, POPOVER_W, popover.offsetHeight || 480);
@@ -1626,7 +1636,6 @@
 		host.style.cssText = 'all:initial;position:fixed;top:0;right:0;z-index:2147483644';
 		panelEl = host;
 		panelRoot = root;
-		document.body.appendChild(host);
 		renderPanel();
 	}
 
@@ -1683,9 +1692,28 @@
 	}
 
 	// --- Pick modes ---
-	// "Pick destination" and "+ Add element" both close the popover and put the page
-	// into a plain-click selection mode: no chord needed, next left click picks,
-	// Escape cancels. Either way the draft popover is restored afterwards.
+	// "Pick destination" and "+ Add element" share one driver: both close the
+	// popover and put the page into a plain-click selection mode (no chord needed,
+	// next left click picks, Escape cancels, draft popover restored afterwards).
+	// Each mode declares its banner, color, hover outline variant, rejection rule
+	// and how a clicked element becomes its result.
+	const PICK_MODES = {
+		member: {
+			banner: 'Click an element to add to the selection',
+			color: '#258a55',
+			outline: 'member',
+			rejectIf: (el, pm) => ((pm.draft?.members || []).includes(el) ? 'Already selected' : null),
+			convert: (el) => el,
+		},
+		destination: {
+			banner: 'Click the destination element',
+			color: '#2b6de8',
+			outline: 'dest',
+			rejectIf: (el, pm) => (el === pm.sourceEl ? 'That is the source element' : null),
+			convert: (el) => captureDestination(el),
+		},
+	};
+
 	function enterPick(kind, sourceEl, sourceData, draft) {
 		hidePopover();
 		pickMode = { kind, sourceEl, sourceData, draft };
@@ -1716,13 +1744,13 @@
 
 	function showPickBanner(kind) {
 		hidePickBanner();
-		const isMember = kind === 'member';
+		const spec = PICK_MODES[kind];
 		const { host, root } = createShadowRoot();
 		host.style.cssText = 'all:initial;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
 		s.textContent = `
-.rf-banner{background:${isMember ? '#258a55' : '#2b6cb0'};color:#fff;padding:8px 16px;border-radius:999px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 8px 24px rgba(23,32,45,0.22);display:flex;gap:10px;align-items:center}
+.rf-banner{background:${spec.color};color:#fff;padding:8px 16px;border-radius:999px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 8px 24px rgba(23,32,45,0.22);display:flex;gap:10px;align-items:center}
 .rf-banner b{font-weight:600}
 .rf-banner span{opacity:0.85}
 `;
@@ -1730,7 +1758,7 @@
 		const b = document.createElement('div');
 		b.className = 'rf-banner';
 		const strong = document.createElement('b');
-		strong.textContent = isMember ? 'Click an element to add to the selection' : 'Click the destination element';
+		strong.textContent = spec.banner;
 		const hint = document.createElement('span');
 		hint.textContent = 'Esc to cancel';
 		b.appendChild(strong);
@@ -1974,13 +2002,10 @@
 		if (e.button != null && e.button !== 0) return;
 		const target = destTargetFrom(e);
 		if (!target) return;
-		if (pickMode.kind === 'member') {
-			if ((pickMode.draft.members || []).includes(target)) { showToast('Already selected'); return; }
-			exitPick(target);
-			return;
-		}
-		if (target === pickMode.sourceEl) { showToast('That is the source element'); return; }
-		exitPick(captureDestination(target));
+		const spec = PICK_MODES[pickMode.kind];
+		const reason = spec.rejectIf(target, pickMode);
+		if (reason) { showToast(reason); return; }
+		exitPick(spec.convert(target));
 	}, CAPTURE);
 
 	// Chord-hold: show outline on mousemove. Hit-testing plus a rect read per event
@@ -1995,7 +2020,7 @@
 		if (!e) return;
 		if (pickMode) {
 			const target = destTargetFrom(e);
-			if (target) showOutline(target, pickMode.kind === 'member' ? 'member' : 'dest');
+			if (target) showOutline(target, PICK_MODES[pickMode.kind].outline);
 			return;
 		}
 		if (!IS_CHORD(e)) return hideOutline();

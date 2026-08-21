@@ -2,7 +2,7 @@
 // annotation target, and a comment must stay editable from any page.
 const { POP, createReporter, withPage } = require('./common');
 
-const PANEL = `[...document.body.children].find(h => h.shadowRoot?.querySelector('.rf-panel'))?.shadowRoot`;
+const PANEL = `[...document.body.children, ...document.documentElement.children].find(h => h.shadowRoot?.querySelector('.rf-panel'))?.shadowRoot`;
 
 module.exports = async function run() {
 	const { check, finish } = createReporter();
@@ -44,13 +44,13 @@ module.exports = async function run() {
 
 		// --- Chrome is interactive again once the chord is released ---
 		const fabLive = await page.evaluate(`(() => {
-			const host = [...document.body.children].find(h => h.shadowRoot?.querySelector('.rf-fab'));
+			const host = [...document.body.children, ...document.documentElement.children].find(h => h.shadowRoot?.querySelector('.rf-fab'));
 			return host ? !host.hasAttribute('data-rf-passthrough') : false; })()`);
 		check('chrome becomes interactive again after chord release', fabLive, String(fabLive));
 
 		// --- The open popover itself is click-through under a chord ---
 		const popPass = await page.evaluate(`(() => {
-			const host = [...document.body.children].find(h => h.shadowRoot?.querySelector('.rf-popover'));
+			const host = [...document.body.children, ...document.documentElement.children].find(h => h.shadowRoot?.querySelector('.rf-popover'));
 			if (!host) return null;
 			const before = host.hasAttribute('data-rf-passthrough');
 			return { before }; })()`);
