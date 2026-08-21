@@ -15,6 +15,9 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Anchored positioning** — popover moves below → above → right → left to avoid covering its target, and follows it through scrolling and layout shifts
 - **Shadow DOM isolation** — FAB, panel, popover, and toast rendered in shadow roots; immune to host page CSS
 - **Export clarity** — element text first, comment follows, `Tweak:` block for style changes, and every selected element listed with its own resolvable selector
+- **Hardened selectors** — attribute values are escaped so quotes/backslashes can't break them, and a stable `data-testid` outranks generic attributes when present
+- **Closed shadow roots** — host-page scripts can't reach into the feedback UI; a corrupt saved row is skipped instead of wiping the session
+- **Refreshed theme** — green accent, rounded cards, pill category chips, softer shadows
 
 ## Interactions
 

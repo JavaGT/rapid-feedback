@@ -28,6 +28,15 @@ async function withPage(run) {
 		await page.setViewport({ width: 1200, height: 800 });
 		page.on('pageerror', e => console.log('PAGEERROR: ' + e.message));
 		page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE ERR: ' + m.text()); });
+		// The userscript closes its shadow roots so host pages can't reach into the
+		// feedback UI. Tests introspect that UI, so force roots open in the harness.
+		// Runs in every document (including navigations) before page scripts.
+		await page.evaluateOnNewDocument(() => {
+			const original = Element.prototype.attachShadow;
+			Element.prototype.attachShadow = function (init) {
+				return original.call(this, { ...init, mode: 'open' });
+			};
+		});
 		await page.goto('file://' + path.join(__dirname, 'page.html'));
 		await page.evaluate(SCRIPT);
 		const chordClick = async (sel) => {

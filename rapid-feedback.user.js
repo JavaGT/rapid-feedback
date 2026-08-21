@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.9
+// @version      5.10
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
 // @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
 // @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
 // @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
@@ -114,19 +115,25 @@
 	// --- Selector generation (v5 overhaul) ---
 	// `id` is deliberately absent: describeElement already emits it as `#id`, and
 	// repeating it as [id="…"] just doubles the length of every selector.
-	const HIGH_SIGNAL_ATTRS = ['aria-label', 'name', 'href'];
+	// data-testid ranks high: it is the most stable, developer-meaningful handle a
+	// feedback selector can carry when a component ships one.
+	const HIGH_SIGNAL_ATTRS = ['aria-label', 'data-testid', 'name', 'href'];
 
 	function collectAttrs(el) {
+		// Values go inside quoted strings in the selector, so quotes and backslashes
+		// must be escaped or the selector silently fails to parse — and every
+		// uniqueness check downstream then fails too.
+		const escapeAttrValue = (v) => String(v).replace(/[\\"]/g, '\\$&');
 		const out = [];
 		for (const attr of HIGH_SIGNAL_ATTRS) {
 			let v = el.getAttribute(attr);
 			if (attr === 'href') v = v?.split('?')[0];
-			if (v) out.push(`${attr}="${v}"`);
+			if (v) out.push(`${attr}="${escapeAttrValue(v)}"`);
 		}
 		const src = el.getAttribute('src')?.split('?')[0];
-		if (src) out.push(`src="${src}"`);
+		if (src) out.push(`src="${escapeAttrValue(src)}"`);
 		const placeholder = el.getAttribute('placeholder');
-		if (placeholder) out.push(`placeholder="${placeholder}"`);
+		if (placeholder) out.push(`placeholder="${escapeAttrValue(placeholder)}"`);
 		return out;
 	}
 
@@ -531,7 +538,13 @@
 				data = localStorage.getItem('rapid_feedback_annotations');
 				if (data) localStorage.setItem(STORAGE_KEY, data);
 			}
-			if (data) annotations = JSON.parse(data);
+			if (!data) return;
+			const parsed = JSON.parse(data);
+			// One corrupt row shouldn't take the whole history down with it: keep the
+			// well-formed objects and let makeAnnotation fill in any missing fields.
+			if (Array.isArray(parsed)) {
+				annotations = parsed.filter(a => a && typeof a === 'object').map(makeAnnotation);
+			}
 		} catch {}
 	}
 
@@ -552,7 +565,10 @@
 		// Every piece of our own chrome carries this marker, so isRfChrome can reject
 		// it by inspection rather than by keeping a list of hosts in sync.
 		host.setAttribute(RF_CHROME_ATTR, '');
-		const root = host.attachShadow({ mode: 'open' });
+		// Closed roots keep page scripts from reaching into the feedback UI — panel
+		// comments are none of the host page's business. Everything that needs the
+		// root later holds its own reference.
+		const root = host.attachShadow({ mode: 'closed' });
 		document.body.appendChild(host);
 		return { host, root };
 	}
@@ -571,43 +587,45 @@
 	function popoverStyles() {
 		return `
 *{margin:0;padding:0;box-sizing:border-box}
-.rf-popover{width:${POPOVER_W}px;background:#f7fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;box-shadow:0 4px 16px rgba(0,0,0,0.15);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#2d3748;pointer-events:auto}
-.rf-popover-ta{width:100%;min-height:60px;padding:8px;border:1px solid #e2e8f0;border-radius:4px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7fafc;color:#2d3748}
-.rf-popover-ta:focus{outline:2px solid #4a5568;outline-offset:-1px}
-.rf-btn{padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f7fafc;color:#2d3748}
-.rf-btn-primary{background:#4a5568;color:#fff;border-color:#4a5568;font-weight:600}
-.rf-btn-sm{padding:3px 8px;font-size:11px;background:transparent;color:#718096;border-color:#e2e8f0}
-.rf-cat-btn{padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#718096}
-.rf-cat-btn.active{border-color:#4a5568;background:#edf2f7;color:#2d3748}
+.rf-popover{width:${POPOVER_W}px;background:#fff;border:1px solid #d7dfe5;border-radius:12px;padding:16px;box-shadow:0 14px 45px rgba(23,32,45,0.18);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#18212b;pointer-events:auto}
+.rf-popover-ta{width:100%;min-height:60px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7f9fa;color:#18212b}
+.rf-popover-ta:focus{outline:2px solid #258a55;outline-offset:-1px}
+.rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
+.rf-btn:hover{background:#f1f4f6}
+.rf-btn-primary{background:#258a55;color:#fff;border-color:#258a55;font-weight:600}
+.rf-btn-primary:hover{background:#1f7a4a}
+.rf-btn-sm{padding:4px 9px;font-size:11px;background:transparent;color:#697783;border-color:#d7dfe5}
+.rf-cat-btn{padding:4px 10px;border:1px solid #d7dfe5;border-radius:14px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783}
+.rf-cat-btn.active{border-color:#35ae70;background:#dff7e9;color:#146331}
 .rf-cat-bar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
-.rf-actions{display:flex;gap:6px;margin-top:10px;justify-content:flex-end}
-.rf-tab-row{display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid #e2e8f0;padding-bottom:6px}
-.rf-tab-btn{padding:4px 10px;border-radius:4px 4px 0 0;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#718096;border:none}
-.rf-tab-btn.active{background:#edf2f7;color:#2d3748;font-weight:600}
+.rf-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end}
+.rf-tab-row{display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid #e3e9ee;padding-bottom:0}
+.rf-tab-btn{padding:6px 12px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783;border:none;border-bottom:2px solid transparent}
+.rf-tab-btn.active{color:#166534;border-bottom-color:#28a465;font-weight:600}
 .rf-styles-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.rf-styles-grid label{font-size:10px;color:#718096;display:block;margin-bottom:2px}
-.rf-styles-grid input{width:100%;padding:3px 6px;border:1px solid #e2e8f0;border-radius:3px;font:11px monospace;background:#fff;color:#2d3748;margin-bottom:4px}
-.rf-styles-grid input:focus{outline:2px solid #4a5568;outline-offset:-1px}
-.rf-styles-grid input[type=range]{padding:0;accent-color:#4a5568;height:16px}
+.rf-styles-grid label{font-size:10px;color:#697783;display:block;margin-bottom:2px}
+.rf-styles-grid input{width:100%;padding:4px 7px;border:1px solid #d7dfe5;border-radius:5px;font:11px monospace;background:#fff;color:#18212b;margin-bottom:4px}
+.rf-styles-grid input:focus{outline:2px solid #258a55;outline-offset:-1px}
+.rf-styles-grid input[type=range]{padding:0;accent-color:#258a55;height:16px}
 .rf-zoom-row{display:flex;gap:6px;align-items:center;margin-bottom:8px;font-size:11px}
-.rf-zoom-row button{padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;background:#f7fafc;cursor:pointer;font-size:13px;color:#2d3748}
-.rf-zoom-tag{font-family:monospace;font-size:10px;color:#718096;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-zoom-row button{padding:3px 8px;border:1px solid #d7dfe5;border-radius:6px;background:#fff;cursor:pointer;font-size:13px;color:#18212b}
+.rf-zoom-tag{font-family:monospace;font-size:10px;color:#697783;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rf-sel{margin-bottom:8px}
-.rf-sel-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;color:#718096;margin-bottom:4px}
-.rf-sel-list{max-height:120px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;background:#fff}
-.rf-sel-row{display:flex;align-items:center;gap:2px;padding:3px 4px 3px 6px;border-bottom:1px solid #edf2f7}
+.rf-sel-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:10px;color:#697783;margin-bottom:4px}
+.rf-sel-list{max-height:120px;overflow-y:auto;border:1px solid #d7dfe5;border-radius:8px;background:#fff}
+.rf-sel-row{display:flex;align-items:center;gap:2px;padding:3px 4px 3px 6px;border-bottom:1px solid #e9eef2}
 .rf-sel-row:last-child{border-bottom:none}
-.rf-sel-row:hover{background:#edf2f7}
-.rf-sel-row.primary{background:#f0fff4}
+.rf-sel-row:hover{background:#eefaf2}
+.rf-sel-row.primary{background:#f1fbf5}
 .rf-sel-row.missing{background:#fff5f5;color:#9b2c2c}
-.rf-sel-status,.rf-primary-hint{font-size:10px;color:#718096;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rf-sel-name{flex:1;min-width:0;font-family:monospace;font-size:10px;color:#2d3748;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rf-sel-act{border:none;background:0 0;color:#718096;cursor:pointer;font-size:11px;line-height:1;padding:2px 5px;border-radius:3px;flex-shrink:0}
-.rf-sel-act:hover{background:#e2e8f0;color:#2d3748}
-.rf-title{font-weight:600;font-size:12px;color:#2d3748;margin-bottom:2px}
-.rf-sub{font-size:9px;color:#718096;margin-bottom:4px;font-family:monospace;word-break:break-all;max-height:40px;overflow:hidden}
+.rf-sel-status,.rf-primary-hint{font-size:10px;color:#697783;margin:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rf-sel-name{flex:1;min-width:0;font-family:monospace;font-size:10px;color:#18212b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-sel-act{border:none;background:0 0;color:#697783;cursor:pointer;font-size:11px;line-height:1;padding:2px 5px;border-radius:3px;flex-shrink:0}
+.rf-sel-act:hover{background:#e3e9ee;color:#18212b}
+.rf-title{font-weight:600;font-size:12px;color:#18212b;margin-bottom:2px}
+.rf-sub{font-size:9px;color:#697783;margin-bottom:4px;font-family:monospace;word-break:break-all;max-height:40px;overflow:hidden}
 .rf-source{font-size:10px;color:#2f855a;margin-bottom:4px;font-family:monospace;word-break:break-all}
-.rf-quote{font-size:11px;color:#718096;margin-bottom:6px;font-style:italic}
+.rf-quote{font-size:11px;color:#697783;margin-bottom:6px;font-style:italic}
 .rf-dest-row{display:flex;gap:6px;align-items:center;margin-top:6px}
 .rf-dest-btn{font-size:11px;flex-shrink:0}
 .rf-dest-tag{font-family:monospace;font-size:10px;color:#2b6cb0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -617,24 +635,24 @@
 	function panelStyles() {
 		return `
 *{margin:0;padding:0;box-sizing:border-box}
-.rf-panel{width:${PANEL_W}px;max-width:100vw;height:100dvh;background:#f7fafc;color:#2d3748;display:flex;flex-direction:column;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border-left:1px solid #e2e8f0;box-shadow:-2px 0 12px rgba(0,0,0,0.1);pointer-events:auto}
-.rf-panel-header{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #e2e8f0;flex-shrink:0}
-.rf-panel-header h2{margin:0;font-size:15px;font-weight:600;flex:1}
-.rf-panel-toolbar{display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid #e2e8f0;flex-shrink:0;flex-wrap:wrap}
-.rf-panel-list{flex:1;overflow-y:auto;padding:8px 12px}
-.rf-panel-footer{border-top:1px solid #e2e8f0;padding:10px 12px;flex-shrink:0}
-.rf-card{background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:12px;margin-bottom:8px}
-.rf-card-title{font-size:12px;font-weight:600;color:#4a5568}
-.rf-card-cat{font-size:9px;padding:1px 5px;border-radius:3px;background:#edf2f7;color:#718096}
-.rf-comment{font-size:12px;padding:6px 8px;background:#edf2f7;border-radius:4px;border-left:3px solid #e2e8f0;margin-bottom:4px;word-break:break-word}
-.rf-url{font-size:10px;color:#718096;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rf-btn{padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f7fafc;color:#2d3748}
-.rf-btn-icon{background:0 0;border:none;color:#718096;cursor:pointer;padding:2px 6px;border-radius:3px;font-size:13px}
+.rf-panel{width:${PANEL_W}px;max-width:100vw;height:100dvh;background:#f7f9fa;color:#18212b;display:flex;flex-direction:column;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border-left:1px solid #d7dfe5;box-shadow:-14px 0 45px rgba(23,32,45,0.10);pointer-events:auto}
+.rf-panel-header{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #e3e9ee;flex-shrink:0}
+.rf-panel-header h2{margin:0;font-size:18px;font-weight:700;flex:1}
+.rf-panel-toolbar{display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid #e3e9ee;flex-shrink:0;flex-wrap:wrap}
+.rf-panel-list{flex:1;overflow-y:auto;padding:10px 12px}
+.rf-panel-footer{border-top:1px solid #e3e9ee;padding:10px 12px;flex-shrink:0}
+.rf-card{background:#fff;border:1px solid #dce3e8;border-radius:12px;padding:12px;margin-bottom:8px;box-shadow:0 2px 8px rgba(23,32,45,0.05)}
+.rf-card-title{font-size:12px;font-weight:600;color:#18212b}
+.rf-card-cat{font-size:9px;padding:2px 7px;border-radius:10px;background:#dff7e9;color:#146331}
+.rf-comment{font-size:12px;padding:6px 8px;background:#f1f4f6;border-radius:6px;border-left:3px solid #d7dfe5;margin-bottom:4px;word-break:break-word}
+.rf-url{font-size:10px;color:#697783;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
+.rf-btn-icon{background:0 0;border:none;color:#697783;cursor:pointer;padding:2px 6px;border-radius:3px;font-size:13px}
 .rf-btn-del{font-size:15px}
-.rf-empty{color:#718096;text-align:center;padding:32px 16px}
-.rf-cat-btn{padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#718096}
-.rf-cat-btn.active{border-color:#4a5568;background:#edf2f7;color:#2d3748}
-.rf-popover-ta{width:100%;min-height:44px;padding:8px;border:1px solid #e2e8f0;border-radius:4px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7fafc;color:#2d3748}
+.rf-empty{color:#697783;text-align:center;padding:32px 16px}
+.rf-cat-btn{padding:4px 10px;border:1px solid #d7dfe5;border-radius:14px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783}
+.rf-cat-btn.active{border-color:#35ae70;background:#dff7e9;color:#146331}
+.rf-popover-ta{width:100%;min-height:44px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#fff;color:#18212b}
 `;
 	}
 
@@ -643,7 +661,7 @@
 		const { host, root } = createShadowRoot();
 		host.style.cssText = 'all:initial;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:2147483647;pointer-events:none';
 		const el = document.createElement('div');
-		el.style.cssText = 'padding:8px 16px;border-radius:6px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.2);background:#4a5568;color:#fff';
+		el.style.cssText = 'padding:8px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 18px rgba(23,32,45,0.25);background:#18212b;color:#fff';
 		el.textContent = msg;
 		root.appendChild(el);
 		setTimeout(() => host.remove(), 2000);
@@ -661,7 +679,7 @@
 		// Hidden is the default state, and hidden means untouchable — opacity alone
 		// still hit-tests, so a concealed FAB used to swallow clicks in that corner.
 		s.textContent = `
-.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.2);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#4a5568;pointer-events:none;opacity:0;transform:translateX(60px)}
+.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 6px 16px rgba(23,32,45,0.25);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#258a55;pointer-events:none;opacity:0;transform:translateX(60px)}
 .rf-fab.rf-fab-on{pointer-events:auto;opacity:1;transform:translateX(0)}
 `;
 		root.appendChild(s);
@@ -733,8 +751,10 @@
 				const key = r.top + ':' + r.left + ':' + r.width + ':' + r.height + ':' + innerWidth + ':' + innerHeight;
 				if (key !== anchor.last) {
 					anchor.last = key;
+					// Closed roots aren't reachable off the host, so measure through the
+					// retained popover root. (startAnchor only ever runs for popovers.)
 					const h = anchor.host.firstElementChild?.offsetHeight
-						|| anchor.host.shadowRoot?.querySelector('.rf-popover')?.offsetHeight || 480;
+						|| popoverRoot?.querySelector('.rf-popover')?.offsetHeight || 480;
 					const pos = placePopover(r, POPOVER_W, h);
 					anchor.host.style.top = pos.top + 'px';
 					anchor.host.style.left = pos.left + 'px';
@@ -1381,7 +1401,7 @@
 		const h2 = document.createElement('h2');
 		h2.textContent = 'Rapid Feedback';
 		const count = document.createElement('span');
-		count.style.cssText = 'font-size:11px;color:#718096;font-weight:500';
+		count.style.cssText = 'font-size:11px;color:#697783;font-weight:500';
 		count.textContent = String(annotations.length);
 		const closeBtn = document.createElement('button');
 		closeBtn.className = 'rf-btn-icon';
@@ -1456,7 +1476,7 @@
 				left.appendChild(commentEl);
 				if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
 					const entries = document.createElement('div');
-					entries.style.cssText = 'font-size:10px;color:#718096;margin-top:4px;font-family:monospace';
+					entries.style.cssText = 'font-size:10px;color:#697783;margin-top:4px;font-family:monospace';
 					entries.textContent = Object.entries(a.adjustedStyles).map(([k, v]) => k + ': ' + v).join('; ');
 					left.appendChild(entries);
 				}
@@ -1496,7 +1516,7 @@
 			}
 			cel.setAttribute('contenteditable', 'true');
 			cel.style.background = '#fff';
-			cel.style.borderLeftColor = '#4a5568';
+			cel.style.borderLeftColor = '#258a55';
 			editBtn.textContent = '✓';
 			cel.focus();
 		}
@@ -1607,7 +1627,7 @@
 	// --- Chord-hold outline ---
 	const OUTLINE_BASE = 'position:fixed;pointer-events:none;z-index:2147483646;border-radius:2px;transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
 	const OUTLINE_VARIANTS = {
-		target: 'border:2px solid #4a5568;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(74,85,104,0.15)',
+		target: 'border:2px solid #258a55;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(37,138,85,0.15)',
 		dest: 'border:2px dashed #2b6cb0;box-shadow:0 0 0 4px rgba(43,108,176,0.18)',
 		member: 'border:2px solid #2f855a;box-shadow:0 0 0 4px rgba(47,133,90,0.18)',
 	};
@@ -1616,7 +1636,7 @@
 		if (document.getElementById('rf-outline-anim')) return;
 		const anim = document.createElement('style');
 		anim.id = 'rf-outline-anim';
-		anim.textContent = '@keyframes rf-outline-pulse{0%,100%{border-color:#4a5568;box-shadow:0 0 0 4px rgba(74,85,104,0.15)}50%{border-color:#718096;box-shadow:0 0 0 8px rgba(74,85,104,0.08)}}';
+		anim.textContent = '@keyframes rf-outline-pulse{0%,100%{border-color:#258a55;box-shadow:0 0 0 4px rgba(37,138,85,0.15)}50%{border-color:#28a465;box-shadow:0 0 0 8px rgba(37,138,85,0.08)}}';
 		document.head.appendChild(anim);
 	}
 
@@ -1688,7 +1708,7 @@
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
 		s.textContent = `
-.rf-banner{background:${isMember ? '#2f855a' : '#2b6cb0'};color:#fff;padding:8px 14px;border-radius:6px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.2);display:flex;gap:10px;align-items:center}
+.rf-banner{background:${isMember ? '#258a55' : '#2b6cb0'};color:#fff;padding:8px 16px;border-radius:999px;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 8px 24px rgba(23,32,45,0.22);display:flex;gap:10px;align-items:center}
 .rf-banner b{font-weight:600}
 .rf-banner span{opacity:0.85}
 `;
