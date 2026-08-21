@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.10
+// @version      5.11
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
 // @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
 // @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
 // @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
@@ -115,9 +116,18 @@
 	// --- Selector generation (v5 overhaul) ---
 	// `id` is deliberately absent: describeElement already emits it as `#id`, and
 	// repeating it as [id="…"] just doubles the length of every selector.
-	// data-testid ranks high: it is the most stable, developer-meaningful handle a
-	// feedback selector can carry when a component ships one.
-	const HIGH_SIGNAL_ATTRS = ['aria-label', 'data-testid', 'name', 'href'];
+	// The data-* test handles rank high: they are the most stable, developer-
+	// meaningful handles a feedback selector can carry when a component ships one.
+	const HIGH_SIGNAL_ATTRS = ['aria-label', 'data-testid', 'data-test', 'data-cy', 'name', 'href'];
+
+	// Ids that look machine-generated — hex hashes, React/Radix uids (`:r1:`),
+	// styled-components (`sc-XyZ12`) — churn between builds and make unstable
+	// anchors, so describeElement leaves them out and prefers other signals.
+	const GENERATED_ID_RE = /^(?:[0-9a-f]{8,}|sc-[a-z0-9]{4,}|.*:.*)$/i;
+
+	function isMeaningfulId(id) {
+		return !!id && id.length <= 64 && !GENERATED_ID_RE.test(id);
+	}
 
 	function collectAttrs(el) {
 		// Values go inside quoted strings in the selector, so quotes and backslashes
@@ -156,7 +166,7 @@
 		let cur = el;
 		while (cur && cur.nodeType === 1 && cur !== document.body && cur !== document.documentElement) {
 			const parts = [cur.tagName.toLowerCase()];
-			if (cur.id) parts.push('#' + cur.id);
+			if (isMeaningfulId(cur.id)) parts.push('#' + cur.id);
 			if (typeof cur.className === 'string') {
 				const cls = filterClasses(cur.className);
 				if (cls.length) parts.push('.' + cls.join('.'));
@@ -257,7 +267,7 @@
 		if (role) out.role = role;
 		const label = el.getAttribute('aria-label') || labelFromLabelledBy(el) || el.getAttribute('alt') || el.getAttribute('title');
 		if (label) out.name = label.trim().replace(/\s+/g, ' ').slice(0, 80);
-		const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test');
+		const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || el.getAttribute('data-cy');
 		if (testId) out.testId = testId;
 		return Object.keys(out).length ? out : null;
 	}
@@ -893,7 +903,7 @@
 		function syncSelection() {
 			members = members.filter(m => m?.isConnected);
 			if (!members.length) { hidePopover(); return; }
-			setSelectionMarkers(members.slice(1));
+			setSelectionMarkers(members.slice(1), 1);
 			setStyleTargets(members);
 			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
 			renderMembers();
@@ -1625,18 +1635,21 @@
 	}
 
 	// --- Chord-hold outline ---
-	const OUTLINE_BASE = 'position:fixed;pointer-events:none;z-index:2147483646;border-radius:2px;transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
+	const OUTLINE_BASE = 'position:fixed;pointer-events:none;z-index:2147483646;border-radius:3px;transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
+	// Hover preview glows blue — "pointing at" should read differently from the
+	// green "already selected" markers — with a crisp inner ring plus soft outer
+	// glow so it stays visible on any background.
 	const OUTLINE_VARIANTS = {
-		target: 'border:2px solid #258a55;animation:rf-outline-pulse 1.5s ease-in-out infinite;box-shadow:0 0 0 4px rgba(37,138,85,0.15)',
-		dest: 'border:2px dashed #2b6cb0;box-shadow:0 0 0 4px rgba(43,108,176,0.18)',
-		member: 'border:2px solid #2f855a;box-shadow:0 0 0 4px rgba(47,133,90,0.18)',
+		target: 'border:2px solid #2b6de8;animation:rf-outline-pulse 1.4s ease-in-out infinite;box-shadow:0 0 0 1px rgba(43,109,232,0.30),0 0 12px rgba(43,109,232,0.50)',
+		dest: 'border:2px dashed #2b6de8;box-shadow:0 0 0 1px rgba(43,109,232,0.30),0 0 12px rgba(43,109,232,0.35)',
+		member: 'border:2px solid #258a55;box-shadow:0 0 0 4px rgba(37,138,85,0.18)',
 	};
 
 	function ensureOutlineAnim() {
 		if (document.getElementById('rf-outline-anim')) return;
 		const anim = document.createElement('style');
 		anim.id = 'rf-outline-anim';
-		anim.textContent = '@keyframes rf-outline-pulse{0%,100%{border-color:#258a55;box-shadow:0 0 0 4px rgba(37,138,85,0.15)}50%{border-color:#28a465;box-shadow:0 0 0 8px rgba(37,138,85,0.08)}}';
+		anim.textContent = '@keyframes rf-outline-pulse{0%,100%{opacity:1}50%{opacity:0.45}}';
 		document.head.appendChild(anim);
 	}
 
@@ -1657,11 +1670,12 @@
 
 	function positionOutline(el) {
 		if (!outlineEl) return;
+		// Sit 2px outside the element's own edge so the ring never covers content.
 		const r = el.getBoundingClientRect();
-		outlineEl.style.top = r.top + 'px';
-		outlineEl.style.left = r.left + 'px';
-		outlineEl.style.width = r.width + 'px';
-		outlineEl.style.height = r.height + 'px';
+		outlineEl.style.top = r.top - 2 + 'px';
+		outlineEl.style.left = r.left - 2 + 'px';
+		outlineEl.style.width = r.width + 4 + 'px';
+		outlineEl.style.height = r.height + 4 + 'px';
 	}
 
 	function hideOutline() {
@@ -1864,19 +1878,29 @@
 	// set you are about to annotate stays visible the whole way through.
 	let selMarkers = [];
 
-	function setSelectionMarkers(els) {
+	// Each marker overlays its element and carries a numbered badge, so a growing
+	// multi-select reads as an ordered list on the page itself. startIndex lets
+	// the open-popover state number non-primary members 2..N (primary is 1).
+	function setSelectionMarkers(els, startIndex) {
 		clearSelectionMarkers();
-		for (const el of els) {
+		const base = startIndex || 0;
+		for (let i = 0; i < els.length; i++) {
+			const el = els[i];
 			const node = document.createElement('div');
 			node.style.cssText = SEL_MARKER_CSS;
 			node.setAttribute(RF_CHROME_ATTR, '');
+			const badge = document.createElement('span');
+			badge.textContent = String(base + i + 1);
+			badge.style.cssText = SEL_BADGE_CSS;
+			node.appendChild(badge);
 			document.body.appendChild(node);
 			selMarkers.push({ el, node });
 		}
 		positionSelectionMarkers();
 	}
 
-	const SEL_MARKER_CSS = 'position:fixed;pointer-events:none;z-index:2147483645;border:2px solid #2f855a;border-radius:2px;background:rgba(47,133,90,0.08)';
+	const SEL_MARKER_CSS = 'position:fixed;pointer-events:none;z-index:2147483645;border:2px solid #258a55;border-radius:3px;background:rgba(37,138,85,0.08);transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s';
+	const SEL_BADGE_CSS = 'position:absolute;top:-9px;left:-9px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#258a55;border:2px solid #fff;color:#fff;font:700 11px/14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(23,32,45,0.35)';
 
 	function positionSelectionMarkers() {
 		for (const { el, node } of selMarkers) {

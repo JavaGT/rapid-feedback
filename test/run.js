@@ -10,7 +10,7 @@ module.exports = async function run() {
   await chordClick('#c1');
   await chordClick('#c2');
   await chordClick('#c3');
-  const markersDuring = await page.evaluate(() => document.querySelectorAll('div[style*="rgba(47, 133, 90"]').length);
+  const markersDuring = await page.evaluate(() => document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length);
   check('markers appear while accumulating', markersDuring === 3, 'got ' + markersDuring);
   await page.keyboard.up('Meta');
   await page.keyboard.up('Alt');
@@ -23,7 +23,7 @@ module.exports = async function run() {
       count: p.querySelector('.rf-sel-head span').textContent,
       title: p.querySelector('.rf-title').textContent,
       zoomHidden: p.querySelector('.rf-zoom-row').style.display,
-      markers: document.querySelectorAll('div[style*="rgba(47, 133, 90"]').length,
+      markers: document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length,
     };
   })()`);
   check('popover lists all 3 members', state.rows && state.rows.length === 3, JSON.stringify(state));
@@ -59,7 +59,7 @@ module.exports = async function run() {
   state = await page.evaluate(`(() => { const p = ${POP}; return {
     rows: p.querySelectorAll('.rf-sel-row').length,
     count: p.querySelector('.rf-sel-head span').textContent,
-    markers: document.querySelectorAll('div[style*="rgba(47, 133, 90"]').length }; })()`);
+    markers: document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length }; })()`);
   check('list shrinks to 2 after remove', state.rows === 2 && state.count === 'Selection — 2 elements', JSON.stringify(state));
   check('marker removed too', state.markers === 1, JSON.stringify(state));
 
