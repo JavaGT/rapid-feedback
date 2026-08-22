@@ -5,6 +5,8 @@ const path = require('path');
 const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
 const CHROME = process.env.RAPID_FEEDBACK_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const POP = `(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
+// Selection markers live in a shadow root, so count them across all chrome roots.
+const MARKERS = `(() => { let n = 0; for (const h of [...document.body.children, ...document.documentElement.children]) n += h.shadowRoot?.querySelectorAll('.rf-marker').length || 0; return n; })()`;
 
 function createReporter() {
 	const results = [];
@@ -49,4 +51,4 @@ async function withPage(run) {
 	}
 }
 
-module.exports = { POP, createReporter, withPage };
+module.exports = { POP, MARKERS, createReporter, withPage };

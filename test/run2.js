@@ -1,4 +1,4 @@
-const { POP, createReporter, withPage } = require('./common');
+const { POP, MARKERS, createReporter, withPage } = require('./common');
 
 module.exports = async function run() {
 	const { check, finish } = createReporter();
@@ -36,7 +36,7 @@ module.exports = async function run() {
   await new Promise(r => setTimeout(r, 150));
   live = await page.evaluate(() => document.getElementById('row').style.cssText);
   check('single: Cancel reverts the preview', !live.includes('33px'), live);
-  check('single: markers cleared on close', await page.evaluate(() => document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length) === 0);
+  check('single: markers cleared on close', await page.evaluate(`${MARKERS}`) === 0);
 
   // --- Destination pick round-trip preserves a group draft ---
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');

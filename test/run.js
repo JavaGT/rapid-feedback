@@ -1,4 +1,4 @@
-const { POP, createReporter, withPage } = require('./common');
+const { POP, MARKERS, createReporter, withPage } = require('./common');
 
 module.exports = async function run() {
 	const { check, finish } = createReporter();
@@ -10,7 +10,7 @@ module.exports = async function run() {
   await chordClick('#c1');
   await chordClick('#c2');
   await chordClick('#c3');
-  const markersDuring = await page.evaluate(() => document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length);
+  const markersDuring = await page.evaluate(`${MARKERS}`);
   check('markers appear while accumulating', markersDuring === 3, 'got ' + markersDuring);
   await page.keyboard.up('Meta');
   await page.keyboard.up('Alt');
@@ -23,7 +23,7 @@ module.exports = async function run() {
       count: p.querySelector('.rf-sel-head span').textContent,
       title: p.querySelector('.rf-title').textContent,
       zoomHidden: p.querySelector('.rf-zoom-row').style.display,
-      markers: document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length,
+      markers: ${MARKERS},
     };
   })()`);
   check('popover lists all 3 members', state.rows && state.rows.length === 3, JSON.stringify(state));
@@ -59,7 +59,7 @@ module.exports = async function run() {
   state = await page.evaluate(`(() => { const p = ${POP}; return {
     rows: p.querySelectorAll('.rf-sel-row').length,
     count: p.querySelector('.rf-sel-head span').textContent,
-    markers: document.querySelectorAll('div[style*="rgba(37, 138, 85"]').length }; })()`);
+    markers: ${MARKERS} }; })()`);
   check('list shrinks to 2 after remove', state.rows === 2 && state.count === 'Selection — 2 elements', JSON.stringify(state));
   check('marker removed too', state.markers === 1, JSON.stringify(state));
 
@@ -103,8 +103,10 @@ module.exports = async function run() {
 
   const out = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
-    const raw = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
-    return { raw, apiKeys: api ? Object.keys(api) : null };
+    const parsed = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
+    // Storage carries a version envelope since v5.14.
+    const rows = Array.isArray(parsed) ? parsed : parsed?.annotations;
+    return { raw: rows, apiKeys: api ? Object.keys(api) : null };
   });
   const ann = out.raw && out.raw[0];
   check('annotation saved', !!ann, JSON.stringify(out).slice(0, 300));
