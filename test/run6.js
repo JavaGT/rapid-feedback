@@ -159,6 +159,116 @@ module.exports = async function run6() {
 		const md = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.markdown());
 		check('ambiguity warning in markdown', md.includes('matches multiple elements'), md.split('\n').slice(0, 12).join('\n'));
 
+		// --- History churn must not kill a draft (SPAs fire replaceState constantly) ---
+		await annot('#c1');
+		await new Promise(r => setTimeout(r, 150));
+		await page.evaluate(() => { for (let i = 0; i < 3; i++) history.replaceState(null, '', location.href); });
+		await new Promise(r => setTimeout(r, 200));
+		let stillOpen = await page.evaluate(`!!${POP}`);
+		check('replaceState with same URL keeps the draft open', stillOpen);
+		await page.keyboard.press('Escape');
+		await new Promise(r => setTimeout(r, 100));
+
+		// --- Chord-click on the FAB must not annotate the page root ---
+		await page.keyboard.down('Alt');
+		await page.keyboard.down('Meta');
+		await chordClick('[data-rf-chrome]'); // clicks pass through chrome while the chord is held
+		await new Promise(r => setTimeout(r, 100));
+		const rootAnnotated = await page.evaluate(() => {
+			for (const h of [...document.body.children, ...document.documentElement.children]) {
+				const t = h.shadowRoot?.querySelector('.rf-title')?.textContent || '';
+				if (t) return t;
+			}
+			return '';
+		});
+		await page.keyboard.up('Meta');
+		await page.keyboard.up('Alt');
+		stillOpen = await page.evaluate(`!!${POP}`);
+		check('chord-click on tool chrome does not annotate <html>', !stillOpen || !/RF Harness|html/.test(rootAnnotated), 'title=' + rootAnnotated);
+
+		// --- Re-render stranding: wipe targets mid-draft -> dimmed lost state ---
+		await annot('#c1');
+		await page.evaluate(() => {
+			const row = document.getElementById('row');
+			row.replaceWith(row.cloneNode(true));
+		});
+		await new Promise(r => setTimeout(r, 200));
+		const lost = await page.evaluate(`(() => { const p = ${POP}; return p ? p.classList.contains('rf-lost') : false; })()`);
+		check('wiping every selected element dims the popover to the lost state', lost);
+		// Revive by chord-adding one of the fresh clones.
+		await annot('#c1');
+		await new Promise(r => setTimeout(r, 200));
+		const revived = await page.evaluate(`(() => {
+			const p = ${POP};
+			return p ? { lost: p.classList.contains('rf-lost'), disabled: p.querySelector('.rf-btn-primary').disabled } : null;
+		})()`);
+		check('chord-add revives a lost draft with Submit re-enabled', !!revived && !revived.lost && !revived.disabled, JSON.stringify(revived));
+		await page.keyboard.press('Escape');
+		await new Promise(r => setTimeout(r, 100));
+
+		// --- Empty chord gesture must not eat the next plain click ---
+		await page.keyboard.down('Alt');
+		await page.keyboard.down('Meta');
+		await new Promise(r => setTimeout(r, 80));
+		await page.keyboard.up('Meta');
+		await page.keyboard.up('Alt');
+		await new Promise(r => setTimeout(r, 120));
+		const fabBox = await page.evaluate(`(() => {
+			const el = ${hostWith('.rf-fab.rf-fab-on')};
+			if (!el) return null;
+			const r = el.getBoundingClientRect();
+			return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+		})()`);
+		if (fabBox && typeof fabBox.x === 'number') {
+			await page.mouse.click(fabBox.x, fabBox.y);
+			await new Promise(r => setTimeout(r, 300));
+			const panelOpened = await page.evaluate(() => {
+				for (const h of [...document.body.children, ...document.documentElement.children]) {
+					if (h.shadowRoot?.querySelector('.rf-panel')) return true;
+				}
+				return false;
+			});
+			check('first click after an empty chord reaches the FAB', panelOpened);
+			await page.evaluate(() => {
+				for (const h of [...document.body.children, ...document.documentElement.children]) {
+					const b = h.shadowRoot?.querySelector('.rf-panel-close');
+					if (b) b.click();
+				}
+			});
+		} else {
+			check('first click after an empty chord reaches the FAB', false, 'FAB was not revealed');
+		}
+
+		// --- Slow release: chord held >CHORD_GESTURE_MS after the click must survive ---
+		const cdp = await page.createCDPSession();
+		await page.keyboard.down('Alt');
+		await page.keyboard.down('Meta');
+		const slowBox = await page.evaluate(`(() => {
+			const r = document.querySelector('#c2').getBoundingClientRect();
+			return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+		})()`);
+		await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: slowBox.x, y: slowBox.y, modifiers: 5, button: 'left', clickCount: 1 });
+		await new Promise(r => setTimeout(r, 1800));
+		await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: slowBox.x, y: slowBox.y, modifiers: 5, button: 'left', clickCount: 1 });
+		await new Promise(r => setTimeout(r, 100));
+		await page.keyboard.up('Meta');
+		await page.keyboard.up('Alt');
+		await new Promise(r => setTimeout(r, 250));
+		const slowRelease = await page.evaluate(`!!${POP}`);
+		check('holding the chord past the gesture window keeps the selection', slowRelease);
+		await page.keyboard.press('Escape');
+		await new Promise(r => setTimeout(r, 100));
+
+		// --- Tall page: placement origin must be the viewport, not document flow ---
+		await page.evaluate(() => { const s = document.createElement('div'); s.style.height = '3000px'; document.body.appendChild(s); });
+		await annot('#c3');		const placed = await page.evaluate(`(() => {
+			const p = ${POP}; if (!p) return null;
+			const r = p.getRootNode().host.getBoundingClientRect();
+			return { top: Math.round(r.top), left: Math.round(r.left) };
+		})()`);
+		check('popover renders inside the viewport on a tall page', !!placed && placed.top >= 0 && placed.top < 800 && placed.left >= 0 && placed.left < 1200, JSON.stringify(placed));
+		await page.keyboard.press('Escape');
+
 		return finish();
 	});
 };

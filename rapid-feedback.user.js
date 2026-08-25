@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.14
+// @version      5.15
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
 // @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
@@ -116,7 +116,12 @@
 	let panelCountEl = null;
 	let fabEl = null;
 	let popoverEl = null;
+
 	let popoverRoot = null;
+
+	// MutationObservers watching for SPA re-renders that strand the draft; one per
+	// open popover, disconnected on close.
+	let domWatchers = [];
 	let outlineEl = null;
 	let pickMode = null;
 	// Handle onto the open popover, so a chord gesture can grow its selection.
@@ -866,12 +871,36 @@
 
 	function revealFab() {
 		if (!fabEl) createFab();
+		clearTimeout(fabGraceTimer);
 		fabEl.btn.classList.add('rf-fab-on');
 	}
 
+	document.addEventListener('mousemove', (e) => { lastPointer.x = e.clientX; lastPointer.y = e.clientY; }, true);
+
 	function concealFab() {
-		if (!fabEl) return;
-		fabEl.btn.classList.remove('rf-fab-on');
+		if (fabEl) fabEl.btn.classList.remove('rf-fab-on');
+	}
+
+	// The chord reveals the FAB, but concealing it the instant the chord ends
+	// leaves no window to actually click it — pass-through eats clicks while the
+	// chord is down, and with nothing saved yet the button disappears on release.
+	// A short grace period after release, extended while the pointer rests on the
+	// button, keeps it reachable without parking clutter on the page permanently.
+	const FAB_GRACE_MS = 1200;
+	let fabGraceTimer = 0;
+	let lastPointer = { x: -1, y: -1 };
+	function scheduleConcealFab() {
+		clearTimeout(fabGraceTimer);
+		fabGraceTimer = setTimeout(() => {
+			if (fabHovered()) { scheduleConcealFab(); return; }
+			if (popoverEl || pickMode || (panelEl && panelEl.style.display !== 'none')) return;
+			concealFab();
+		}, FAB_GRACE_MS);
+	}
+	function fabHovered() {
+		if (!fabEl) return false;
+		const b = fabEl.btn.getBoundingClientRect();
+		return lastPointer.x >= b.left && lastPointer.x <= b.right && lastPointer.y >= b.top && lastPointer.y <= b.bottom;
 	}
 
 	// While a chord is held or a pick mode is running, every click is meant for the
@@ -996,7 +1025,11 @@
 	function showPopover(el, data, initial) {
 		hidePopover();
 		const { host, root } = createShadowRoot();
-		host.style.cssText = `all:initial;position:fixed;z-index:${Z.surface};pointer-events:none`;
+		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
+		// static position sits at the end of document flow. Without an explicit
+		// origin, every translate3d placement is displaced downward by the whole
+		// page height and the popover renders off-screen on all but short pages.
+		host.style.cssText = `all:initial;position:fixed;top:0;left:0;z-index:${Z.surface};pointer-events:none`;
 		root.appendChild(shadowStyle());
 		const ps = document.createElement('style');
 		ps.textContent = popoverStyles();
@@ -1123,7 +1156,11 @@
 		function syncSelection() {
 			members = members.filter(m => m?.isConnected);
 			if (!members.length) { setLostState(); return; }
+			// Reviving from a lost state must undo everything setLostState changed.
 			popover.classList.remove('rf-lost');
+			submitBtn.disabled = false;
+			submitBtn.title = '';
+			renderHeader();
 			setSelectionMarkers(members.slice(1), 1);
 			setStyleTargets(members);
 			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
@@ -1588,6 +1625,19 @@
 		// any edits carried back from a pick mode.
 		syncSelection();
 		startAnchor(host, () => zoomTarget);
+		// SPA re-renders can remove every selected element mid-draft. The anchor loop
+		// suspends when idle, so it can't be relied on to notice; a MutationObserver
+		// stays silent until the page actually mutates, then runs one cheap
+		// connectivity check. Revival is just syncSelection() re-running.
+		const domWatcher = new MutationObserver(() => {
+			if (members.some(m => m.isConnected)) {
+				if (popover.classList.contains('rf-lost')) syncSelection();
+				return;
+			}
+			if (!popover.classList.contains('rf-lost')) setLostState();
+		});
+		domWatcher.observe(document.documentElement, { childList: true, subtree: true });
+		domWatchers.push(domWatcher);
 		ta.focus();
 	}
 
@@ -1670,6 +1720,8 @@
 
 	function hidePopover() {
 		if (drag) { removeEventListener('pointermove', drag.move); removeEventListener('pointerup', drag.up); drag = null; }
+		for (const w of domWatchers) w.disconnect();
+		domWatchers = [];
 		// A deliberately dragged position survives across popovers — that's the
 		// point of remembering it. Only an explicit Cancel/Esc resets it
 		// (see cancelPopover).
@@ -2212,6 +2264,12 @@
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
 		if (isRfChrome(target)) return null;
+		if (target === document.body || target === document.documentElement) {
+			// The click-through design drops chord clicks on our own chrome onto the
+			// page root — annotating <html> is never useful, and a full-viewport
+			// popover for it is exactly the "popup gone wrong" failure mode.
+			return null;
+		}
 		const isPierceLayer = (el) => {
 			if (!el || el.nodeType !== 1) return false;
 			// Known overlay class names stay a fast-path signal; the shell heuristic
@@ -2254,9 +2312,10 @@
 	}
 
 	// One gesture spans the whole chord hold, so repeat clicks accumulate instead of
-	// each one starting over.
+	// each one starting over. An existing unopened gesture continues even if the
+	// wall clock expired — only a resolved or cleared gesture starts fresh.
 	function armChordGesture(e) {
-		if (isLiveChordGesture()) { chordGesture.armedAt = performance.now(); return; }
+		if (chordGesture && !chordGesture.opened) { chordGesture.armedAt = performance.now(); return; }
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		const hint = path.find(n => n && n.nodeType === 1) || e.target;
 		chordGesture = {
@@ -2270,7 +2329,9 @@
 	}
 
 	function addToChordGroup(e) {
-		if (!isLiveChordGesture()) return;
+		// Stale-but-held gestures keep accumulating: only a resolved/closed gesture
+		// blocks, and every arriving click carries the chord anyway.
+		if (!chordGesture || chordGesture.opened) return;
 		const target = resolveChordTarget(e, null);
 		if (!target) return;
 		const accumulated = chordGesture.accumulated;
@@ -2287,13 +2348,13 @@
 		clearSelectionMarkers();
 	}
 
+	// The wall-clock expiry marks the gesture stale so it can't swallow unrelated
+	// clicks forever; it deliberately does NOT destroy it. A chord still physically
+	// held (keys not yet released) must resolve its selection on keyup — the
+	// "click, glance, release" rhythm routinely outlives CHORD_GESTURE_MS.
 	function isLiveChordGesture() {
 		if (!chordGesture) return false;
-		if (performance.now() - chordGesture.armedAt > CHORD_GESTURE_MS) {
-			clearChordGesture();
-			return false;
-		}
-		return true;
+		return performance.now() - chordGesture.armedAt <= CHORD_GESTURE_MS;
 	}
 
 	// --- Selection markers ---
@@ -2350,7 +2411,9 @@
 	}
 
 	function finishChordGesture(e) {
-		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
+		// Resolution is keyed to the physical chord release, not the wall clock:
+		// a stale-but-held gesture must still open its popover here.
+		if (!chordGesture && !IS_CHORD(e)) return;
 		// Only meaningful when a pointer released over our chrome. On the keyup path
 		// e.target is whatever holds focus, which is the popover's own textarea
 		// whenever a popover is open — and that must not cancel the gesture.
@@ -2424,8 +2487,12 @@
 
 	function queueHover(e) {
 		// Snapshot what the handlers read. composedPath() returns an empty array once
-		// dispatch finishes, so it has to be resolved now rather than on the tick.
+		// dispatch finishes, so it has to be resolved on the tick rather than later.
 		const path = e.composedPath ? e.composedPath() : [e.target];
+		// A held chord with the mouse gliding is an active gesture: refresh its arm
+		// so a slow "click, glance, release" rhythm can't outlive CHORD_GESTURE_MS
+		// and silently drop the selection.
+		if (chordGesture && IS_CHORD(e)) chordGesture.armedAt = performance.now();
 		hoverEvent = {
 			clientX: e.clientX, clientY: e.clientY, target: e.target,
 			altKey: e.altKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey,
@@ -2509,14 +2576,14 @@
 			syncChromeClickThrough();
 			hideOutline();
 			// Chord released: resolve whatever was selected during the hold. One target
-			// opens the normal popover, several open the merged group popover.
-			if (isLiveChordGesture()) {
-				const accumulated = chordGesture ? [...chordGesture.accumulated] : [];
-				if (accumulated.length >= 1 && !chordGesture.opened) {
-					killEvent(e);
-					finishChordGesture(e);
-					return;
-				}
+			// opens the normal popover, several open the merged group popover. Any
+			// unopened gesture resolves here, live or wall-clock-stale — the physical
+			// key release is what ends it, and dropping a stale one silently ate
+			// selections from the common "click, glance, release" rhythm.
+			if (chordGesture && !chordGesture.opened) {
+				killEvent(e);
+				finishChordGesture(e);
+				return;
 			}
 			const now = performance.now();
 			if (now - lastChordRelease < DOUBLE_TAP_MS) {
@@ -2527,12 +2594,17 @@
 			}
 			lastChordRelease = now;
 		}
-		if (!IS_CHORD(e) && !hasAnnotations()) concealFab();
+		if (!IS_CHORD(e) && !hasAnnotations()) scheduleConcealFab();
 	}, true);
 
 	// A selector can point at a different component after a route swap, so closing is
-	// safer than silently retargeting an unsaved draft onto the new screen.
+	// safer than silently retargeting an unsaved draft onto the new screen. But SPAs
+	// and analytics fire pushState/replaceState constantly without changing the URL
+	// — only an actual location change counts as navigation.
+	let lastRouteUrl = location.href;
 	function handleRouteChange() {
+		if (location.href === lastRouteUrl) return;
+		lastRouteUrl = location.href;
 		if (!popoverEl && !pickMode && !chordGesture) return;
 		pickMode = null;
 		document.documentElement.style.cursor = '';
