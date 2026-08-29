@@ -1127,7 +1127,6 @@
 .rf-drag-handle:hover::before{background:#b9c6cf}
 .rf-dragging,.rf-dragging *{cursor:grabbing !important}
 .rf-lost{opacity:0.55;transition:opacity 0.15s}
-.rf-lost .rf-btn-primary:disabled{opacity:0.5;cursor:not-allowed}
 .rf-popover-ta{width:100%;min-height:60px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7f9fa;color:#18212b}
 .rf-popover-ta:focus{outline:2px solid #258a55;outline-offset:-1px}
 .rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
@@ -1542,7 +1541,6 @@
 			if (!members.length) { setLostState(); return; }
 			// Reviving from a lost state must undo everything setLostState changed.
 			popover.classList.remove('rf-lost');
-			submitBtn.disabled = false;
 			submitBtn.title = '';
 			renderHeader();
 			setSelectionMarkers(members.slice(1), 1);
@@ -1551,8 +1549,8 @@
 			renderMembers();
 		}
 
-		// Every selected element left the DOM (SPA swap, re-render). Freezing dimmed
-		// with Submit disabled beats vanishing with the draft — the comment survives
+		// Every selected element left the DOM (SPA swap, re-render). Keep the draft
+		// visible and submit-able: curData still contains the captured target details,
 		// and a chord-add can revive the popover.
 		function setLostState() {
 			setSelectionMarkers([]);
@@ -1565,8 +1563,7 @@
 			selList.innerHTML = '';
 			selList.style.display = 'none';
 			zoomRow.style.display = 'none';
-			submitBtn.disabled = true;
-			submitBtn.title = 'The selected element is gone — copy the comment or cancel';
+			submitBtn.title = 'The selected element is gone — captured details will be saved';
 		}
 
 		function setPrimary(next) {

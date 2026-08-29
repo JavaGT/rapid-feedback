@@ -202,7 +202,7 @@ module.exports = async function run6() {
 			const p = ${POP};
 			return p ? { lost: p.classList.contains('rf-lost'), disabled: p.querySelector('.rf-btn-primary').disabled } : null;
 		})()`);
-		check('chord-add revives a lost draft with Submit re-enabled', !!revived && !revived.lost && !revived.disabled, JSON.stringify(revived));
+		check('chord-add revives a lost draft with Submit available', !!revived && !revived.lost && !revived.disabled, JSON.stringify(revived));
 		await page.keyboard.press('Escape');
 		await new Promise(r => setTimeout(r, 100));
 
