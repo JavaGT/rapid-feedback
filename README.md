@@ -9,6 +9,7 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Element zoom** — ▲/▼ for parent/child and ◀/▶ for siblings; the popover header re-renders so you always see what you're about to capture
 - **Multi-select** — hold chord, click multiple elements (each marked with a numbered green badge showing its order), release → one popover for the whole set. The selection is an editable list: drop a member, promote one to primary, `⧉ Select similar` to grab the repeated siblings, or `+ Add element` to pick another. Chord-clicking again with the popover open grows the selection rather than starting over, so the draft survives. Markers stay on the page throughout, and a style tweak previews across every selected element
 - **Chrome that gets out of the way** — while the chord is held or a pick mode is running, everything the tool renders becomes click-through, so the FAB, panel or popover can never swallow a click meant for the element beneath. Nothing the tool renders can itself be annotated
+- **Iframe-aware picking** — same-origin iframe documents are listened to from the top-level tool, with coordinates and frame paths preserved for reopening; cross-origin frames stay isolated and use their own userscript instance
 - **Relocation** — "Pick destination" closes the popover and enters a click-to-select mode; your draft is preserved either way
 - **Tabbed popover** — Comment tab open by default, Styles behind one click; 2-column grid layout for style controls
 - **Live style preview** — edits apply to the page as you type and revert on Cancel/Escape, or stay put when you submit
@@ -34,6 +35,10 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | `Pick destination`, then click | Record where the element should move to |
 | `Esc` | Cancel destination mode, then close the popover, then close the panel |
 | `⌘/Ctrl + Enter` | Submit from the comment box |
+
+The userscript intentionally does not pierce cross-origin iframe contents from the
+parent page. Because the script has no `@noframes` directive, Tampermonkey can run a
+separate Rapid Feedback instance inside matching cross-origin frames.
 
 ## Export format
 

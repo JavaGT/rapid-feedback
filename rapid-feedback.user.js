@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.15
+// @version      5.16
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
 // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
 // @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
 // @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
@@ -30,6 +31,18 @@
 
 (function () {
 	'use strict';
+	const IS_TOP_FRAME = window.parent === window;
+	// A top-level instance can bridge same-origin frames that do not run the
+	// userscript themselves. Instances that do run in a frame mark it so the top
+	// instance does not install a second set of handlers there.
+	if (!IS_TOP_FRAME) {
+		let bridged = false;
+		try { bridged = !!document.__RF_BRIDGED_BY_TOP__; } catch {}
+		if (bridged) return;
+		try {
+			Object.defineProperty(window, '__SCOPE_FEEDBACK_FRAME_INSTANCE__', { value: true, configurable: false });
+		} catch { try { window.__SCOPE_FEEDBACK_FRAME_INSTANCE__ = true; } catch {} }
+	}
 	// Guard with a dedicated flag so a re-injection during init can't mistake the
 	// half-built API object for a finished one. Flags can lie — HMR and hydration
 	// wipes can strip our chrome while leaving the flag set — so the flag alone
@@ -137,6 +150,110 @@
 	const resizeWaiters = new Set();
 	addEventListener('resize', () => { for (const wake of resizeWaiters) wake(); });
 
+	// Pointer events stop at iframe boundaries. Keep one handler registry so the
+	// top-level instance can listen inside same-origin frames without duplicating
+	// the event logic, while cross-origin frames remain browser-isolated.
+	const feedbackEventDocuments = new Set([document]);
+	const feedbackListeners = [];
+	const feedbackFrameWatchers = new WeakSet();
+	const feedbackDocumentWatchers = new WeakMap();
+
+	function addFeedbackListener(type, listener, options) {
+		feedbackListeners.push({ type, listener, options });
+		for (const doc of feedbackEventDocuments) doc.addEventListener(type, listener, options);
+	}
+
+	function accessibleFrameDocument(frame) {
+		try {
+			const doc = frame.contentDocument;
+			return doc?.documentElement ? doc : null;
+		} catch {
+			return null;
+		}
+	}
+
+	function watchFeedbackDocument(doc) {
+		if (feedbackDocumentWatchers.has(doc)) return;
+		const observer = new MutationObserver(records => {
+			const hasFrameChange = records.some(record => [...record.addedNodes, ...record.removedNodes].some(node => {
+				if (node.nodeType !== 1) return false;
+				return node.matches('iframe') || !!node.querySelector('iframe');
+			}));
+			if (hasFrameChange) scanFeedbackFrames(doc);
+		});
+		// Observe the Document node rather than <html>, so document.write or a
+		// hydration swap replacing the root does not orphan frame discovery.
+		feedbackDocumentWatchers.set(doc, observer);
+		observer.observe(doc, { childList: true, subtree: true });
+	}
+
+	function registerFeedbackDocument(doc) {
+		if (!doc || doc.defaultView?.__SCOPE_FEEDBACK_FRAME_INSTANCE__) return;
+		try { Object.defineProperty(doc, '__RF_BRIDGED_BY_TOP__', { value: true, configurable: false }); } catch {}
+		if (!feedbackEventDocuments.has(doc)) {
+			feedbackEventDocuments.add(doc);
+			for (const { type, listener, options } of feedbackListeners) doc.addEventListener(type, listener, options);
+			if (pickMode && doc.documentElement) doc.documentElement.style.cursor = 'crosshair';
+		}
+		if (anchor && doc !== document) {
+			doc.addEventListener('scroll', anchor.wake, { capture: true, passive: true });
+			anchor.scrollDocuments.add(doc);
+		}
+		if (drag && doc !== document) {
+			doc.addEventListener('pointermove', drag.move);
+			doc.addEventListener('pointerup', drag.up);
+			drag.documents.add(doc);
+		}
+		watchFeedbackDocument(doc);
+		scanFeedbackFrames(doc);
+	}
+
+	function unregisterFeedbackDocument(doc) {
+		if (doc === document || !feedbackEventDocuments.delete(doc)) return;
+		for (const { type, listener, options } of feedbackListeners) doc.removeEventListener(type, listener, options);
+		const watched = feedbackDocumentWatchers.get(doc);
+		watched?.disconnect();
+		feedbackDocumentWatchers.delete(doc);
+		anchor?.scrollDocuments.delete(doc);
+	}
+
+	function pruneFeedbackDocuments() {
+		for (const doc of [...feedbackEventDocuments]) {
+			if (doc === document) continue;
+			try {
+				const frame = doc.defaultView?.frameElement;
+				if (!frame || frame.contentDocument !== doc) unregisterFeedbackDocument(doc);
+			} catch { unregisterFeedbackDocument(doc); }
+		}
+	}
+
+	function scanFeedbackFrames(rootDoc) {
+		if (!IS_TOP_FRAME) return;
+		if (rootDoc === document) pruneFeedbackDocuments();
+		for (const frame of rootDoc.querySelectorAll('iframe')) {
+			if (!feedbackFrameWatchers.has(frame)) {
+				feedbackFrameWatchers.add(frame);
+				frame.addEventListener('load', () => {
+					const doc = accessibleFrameDocument(frame);
+					pruneFeedbackDocuments();
+					if (doc) registerFeedbackDocument(doc);
+				});
+			}
+			const doc = accessibleFrameDocument(frame);
+			// Wait for navigation to finish before registering. This avoids binding
+			// stale about:blank documents before a frame's real document is ready.
+			if (doc && (doc.readyState === 'interactive' || doc.readyState === 'complete')) registerFeedbackDocument(doc);
+		}
+	}
+
+	function setFeedbackCursor(value) {
+		for (const doc of feedbackEventDocuments) {
+			if (doc.documentElement) doc.documentElement.style.cursor = value;
+		}
+	}
+
+	if (IS_TOP_FRAME) watchFeedbackDocument(document);
+
 	// --- Utility-class detection ---
 	const UTILITY_CLASS_RE = /^(p|m)(t|r|b|l|x|y|s|e)?-\d+|^(w|h|min-w|min-h|max-w|max-h)-\d+|^(text|font|leading|tracking|rounded|border|bg|shadow|opacity|z|flex|grid|gap|items|justify|self|order|overflow|object|top|right|bottom|left|inset|ring|outline|decoration|underline|line-through|no-underline|uppercase|lowercase|capitalize|normal-case|truncate|italic|not-italic|font|antialiased|subpixel-antialiased|align|break|whitespace|list|sr-only|invisible|visible|static|fixed|absolute|relative|sticky|block|inline|flow-root|contents|hidden|isolate|float|clear|container|columns|aspect|basis|grow|shrink)/;
 
@@ -217,16 +334,17 @@
 	// True when the emitted chain no longer identifies one element — the DOM
 	// changed or the chain was truncated. Exports surface this so developers know
 	// the selector may drift.
-	function isSelectorAmbiguous(selector) {
+	function isSelectorAmbiguous(selector, el) {
 		if (!selector) return false;
-		try { return document.querySelectorAll(selector).length > 1; } catch { return false; }
+		try { return (el?.ownerDocument || document).querySelectorAll(selector).length > 1; } catch { return false; }
 	}
 
 	function describeElement(el) {
 		if (el.nodeType !== 1) return '';
+		const ownerDoc = el.ownerDocument || document;
 		const chain = [];
 		let cur = el;
-		while (cur && cur.nodeType === 1 && cur !== document.body && cur !== document.documentElement) {
+		while (cur && cur.nodeType === 1 && cur !== ownerDoc.body && cur !== ownerDoc.documentElement) {
 			const parts = [cur.tagName.toLowerCase()];
 			if (isMeaningfulId(cur.id)) parts.push('#' + cur.id);
 			if (typeof cur.className === 'string') {
@@ -242,6 +360,20 @@
 			cur = parentOf(cur);
 		}
 		return chain.slice(-12).join(' > ');
+	}
+
+	function framePathFor(el) {
+		const path = [];
+		let doc = el.ownerDocument || document;
+		while (doc && doc !== document) {
+			const frame = doc.defaultView?.frameElement;
+			if (!frame) return null;
+			const selector = describeElement(frame);
+			if (!selector) return null;
+			path.unshift({ selector });
+			doc = frame.ownerDocument;
+		}
+		return path.length ? path : null;
 	}
 
 	function parentOf(el) {
@@ -271,6 +403,31 @@
 	function getBoundingRect(el) {
 		const r = el.getBoundingClientRect();
 		return { width: Math.round(r.width), height: Math.round(r.height) };
+	}
+
+	// An element's rect is relative to its own frame viewport. The overlay is
+	// hosted by the top document, so add each iframe's viewport offset on the way
+	// up before using the rect for positioning or markers.
+	function getViewportRect(el) {
+		const r = el.getBoundingClientRect();
+		let left = r.left;
+		let top = r.top;
+		let doc = el.ownerDocument;
+		while (doc && doc !== document) {
+			const frame = doc.defaultView?.frameElement;
+			if (!frame) break;
+			const fr = frame.getBoundingClientRect();
+			left += fr.left + frame.clientLeft;
+			top += fr.top + frame.clientTop;
+			doc = frame.ownerDocument;
+		}
+		return { x: left, y: top, top, left, right: left + r.width, bottom: top + r.height, width: r.width, height: r.height };
+	}
+
+	function topClientPoint(e) {
+		const frame = e.view?.frameElement;
+		const offset = frame ? getViewportRect(frame) : null;
+		return { x: e.clientX + (offset?.left || 0), y: e.clientY + (offset?.top || 0) };
 	}
 
 	// --- Svelte source location ---
@@ -324,8 +481,8 @@
 
 	// "Is this a Svelte app at all?" heuristic via scoped classes. Not cached:
 	// Svelte content can mount long after first capture on SPAs.
-	function looksLikeSvelte() {
-		try { return document.querySelector('[class*="svelte-"]') !== null; } catch { return false; }
+	function looksLikeSvelte(ownerDoc = document) {
+		try { return ownerDoc.querySelector('[class*="svelte-"]') !== null; } catch { return false; }
 	}
 
 	function getSourceLoc(el) {
@@ -333,7 +490,7 @@
 		if (!metaEl) {
 			// No dev metadata. If the page still smells like Svelte, say why instead
 			// of going quiet — reviewers otherwise assume the tool is broken.
-			return looksLikeSvelte() ? { status: 'svelte-production-build' } : null;
+			return looksLikeSvelte(el.ownerDocument) ? { status: 'svelte-production-build' } : null;
 		}
 		const meta = readSvelteMeta(metaEl);
 		const loc = meta.loc;
@@ -385,7 +542,7 @@
 	function labelFromLabelledBy(el) {
 		const id = el.getAttribute('aria-labelledby');
 		if (!id) return null;
-		const ref = document.getElementById(id.split(/\s+/)[0]);
+		const ref = (el.ownerDocument || document).getElementById(id.split(/\s+/)[0]);
 		return ref ? (ref.textContent || '').trim() : null;
 	}
 
@@ -433,6 +590,10 @@
 		return parts.slice(-(maxSegments || 7)).join(' > ');
 	}
 
+	function compactFramePath(path) {
+		return (Array.isArray(path) ? path : []).map(frame => compactAncestorChain(frame?.selector, 4)).filter(Boolean).join(' > ');
+	}
+
 	function routeFromUrl(url) {
 		try { const u = new URL(url); return u.pathname + u.search; } catch { return url || ''; }
 	}
@@ -464,9 +625,22 @@
 		return el.tagName.toLowerCase() + ':nth-of-type(' + n + ')';
 	}
 
+	function frameDocumentFor(path) {
+		let ownerDoc = document;
+		for (const frameRef of Array.isArray(path) ? path : []) {
+			let frame;
+			try { frame = ownerDoc.querySelector(frameRef.selector); } catch { return null; }
+			if (!frame) return null;
+			try { ownerDoc = frame.contentDocument; } catch { return null; }
+			if (!ownerDoc) return null;
+		}
+		return ownerDoc;
+	}
+
 	function resolveStoredMember(ref) {
 		if (!ref?.selector) return null;
-		try { return document.querySelector(ref.selector); } catch { return null; }
+		const ownerDoc = frameDocumentFor(ref.framePath);
+		try { return ownerDoc?.querySelector(ref.selector) || null; } catch { return null; }
 	}
 
 	// Stored target/destination record → short label (exports). Same shape of output,
@@ -509,6 +683,7 @@
 	function makeAnnotation(data) {
 		return {
 			selector: data.selector || '(general)',
+			framePath: Array.isArray(data.framePath) ? data.framePath : null,
 			tag: data.tag || 'general',
 			text: data.text || '',
 			styles: data.styles || null,
@@ -557,13 +732,17 @@
 				if (a.a11y.testId) bits.push('testid=' + a.a11y.testId);
 				if (bits.length) lines.push('A11y: ' + bits.join(' '));
 			}
-			if (isSelectorAmbiguous(a.selector)) lines.push('⚠ Selector matches multiple elements right now — it may drift');
+			if (isSelectorAmbiguous(a.selector, resolveStoredMember(a))) lines.push('⚠ Selector matches multiple elements right now — it may drift');
 			const where = compactAncestorChain(a.selector);
 			if (where) lines.push('Where: ' + where);
+			const frame = compactFramePath(a.framePath);
+			if (frame) lines.push('Frame: ' + frame);
 			if (a.rect) lines.push('Rect: ' + a.rect.width + '\u00d7' + a.rect.height);
 			if (a.destination) {
 				const d = a.destination;
 				lines.push('\u2192 Destination: ' + (compactAncestorChain(d.selector, 4) || d.selector));
+				const frame = compactFramePath(d.framePath);
+				if (frame) lines.push('  Frame: ' + frame);
 				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
 			}
@@ -580,8 +759,10 @@
 					if (txt && !label.includes('"' + txt + '"')) {
 						lines.push('    Text: “' + (txt.length > 80 ? txt.slice(0, 80) + '…' : txt) + '”');
 					}
-					const w = compactAncestorChain(t.selector, 4);
-					if (w) lines.push('    Where: ' + w);
+				const w = compactAncestorChain(t.selector, 4);
+				if (w) lines.push('    Where: ' + w);
+				const frame = compactFramePath(t.framePath);
+				if (frame) lines.push('    Frame: ' + frame);
 					if (t.source?.ref) {
 						lines.push('    Source: ' + t.source.ref);
 						const eu = editorUrlFor(t.source.file, t.source.line, t.source.column);
@@ -620,14 +801,16 @@
 				editorUrl: a.source?.ref ? editorUrlFor(a.source.file, a.source.line, a.source.column) : null,
 				a11y: a.a11y || null,
 				selector: a.selector || null,
+				framePath: a.framePath || null,
 				where: compactAncestorChain(a.selector) || null,
 				tag: a.tag || null,
 				rect: a.rect || null,
 				adjustedStyles: a.adjustedStyles || null,
 				styleRestore: a.styleRestore || null,
-				selectorAmbiguous: isSelectorAmbiguous(a.selector),
+				selectorAmbiguous: isSelectorAmbiguous(a.selector, resolveStoredMember(a)),
 				destination: a.destination ? {
 					selector: a.destination.selector,
+					framePath: a.destination.framePath || null,
 					text: a.destination.text || null,
 					a11y: a.destination.a11y,
 					where: compactAncestorChain(a.destination.selector, 4)
@@ -635,6 +818,7 @@
 				groupSize: a.targets?.length ? a.targets.length + 1 : 1,
 				targets: a.targets ? a.targets.map(t => ({
 					selector: t.selector,
+					framePath: t.framePath || null,
 					tag: t.tag || null,
 					text: t.text || null,
 					a11y: t.a11y || null,
@@ -875,7 +1059,11 @@
 		fabEl.btn.classList.add('rf-fab-on');
 	}
 
-	document.addEventListener('mousemove', (e) => { lastPointer.x = e.clientX; lastPointer.y = e.clientY; }, true);
+	addFeedbackListener('mousemove', (e) => {
+		const point = topClientPoint(e);
+		lastPointer.x = point.x;
+		lastPointer.y = point.y;
+	}, true);
 
 	function concealFab() {
 		if (fabEl) fabEl.btn.classList.remove('rf-fab-on');
@@ -967,13 +1155,13 @@
 	// A static popover therefore costs ~zero frames instead of a per-frame rect read.
 	function startAnchor(host, getTarget) {
 		stopAnchor();
-		anchor = { host, getTarget, raf: 0, last: '', idleFrames: 0 };
+		anchor = { host, getTarget, raf: 0, last: '', idleFrames: 0, scrollDocuments: new Set() };
 		const tick = () => {
 			if (!anchor) return;
 			let changed = false;
 			const el = anchor.getTarget();
 			if (el && el.isConnected) {
-				const r = el.getBoundingClientRect();
+				const r = getViewportRect(el);
 				const key = r.top + ':' + r.left + ':' + r.width + ':' + r.height + ':' + innerWidth + ':' + innerHeight;
 				if (key !== anchor.last) {
 					anchor.last = key;
@@ -1005,6 +1193,11 @@
 			anchor.raf = requestAnimationFrame(tick);
 		};
 		addEventListener('scroll', anchor.wake, { capture: true, passive: true });
+		for (const doc of feedbackEventDocuments) {
+			if (doc === document) continue;
+			doc.addEventListener('scroll', anchor.wake, { capture: true, passive: true });
+			anchor.scrollDocuments.add(doc);
+		}
 		resizeWaiters.add(anchor.wake);
 		anchor.lastScrollX = scrollX; anchor.lastScrollY = scrollY;
 		anchor.lastW = innerWidth; anchor.lastH = innerHeight;
@@ -1015,6 +1208,7 @@
 		if (!anchor) return;
 		cancelAnimationFrame(anchor.raf);
 		removeEventListener('scroll', anchor.wake, { capture: true });
+		for (const doc of anchor.scrollDocuments) doc.removeEventListener('scroll', anchor.wake, { capture: true });
 		resizeWaiters.delete(anchor.wake);
 		anchor = null;
 	}
@@ -1145,7 +1339,7 @@
 		zoomTag.textContent = compactLabel(zoomTarget);
 
 		function repositionTo(target) {
-			const r = target.getBoundingClientRect();
+			const r = getViewportRect(target);
 			placePopoverAt(host, r, popover.offsetHeight || 480);
 		}
 
@@ -1333,7 +1527,8 @@
 
 		upBtn.addEventListener('click', () => {
 			const p = zoomTarget.parentElement;
-			if (p && p !== document.body && p !== document.documentElement) setZoomTarget(p);
+			const ownerDoc = zoomTarget.ownerDocument || document;
+			if (p && p !== ownerDoc.body && p !== ownerDoc.documentElement) setZoomTarget(p);
 		});
 		downBtn.addEventListener('click', () => setZoomTarget(zoomTarget.firstElementChild));
 		prevBtn.addEventListener('click', () => setZoomTarget(zoomTarget.previousElementSibling));
@@ -1539,9 +1734,13 @@
 				if (!styleSnapshot.has(el)) continue;
 				const selector = describeElement(el);
 				if (!selector) continue;
-				restore.push({ selector, style: styleSnapshot.get(el) });
+				restore.push({ selector, framePath: framePathFor(el), style: styleSnapshot.get(el) });
 			}
-			return restore.length ? { primary: curData.selector, targets: restore } : null;
+			return restore.length ? {
+				primary: curData.selector,
+				primaryFramePath: curData.framePath || framePathFor(members[0]),
+				targets: restore,
+			} : null;
 		}
 
 		// One shape-builder for Submit and Cut — the two paths construct the same
@@ -1607,7 +1806,7 @@
 		root.appendChild(popover);
 
 		host.style.position = 'fixed';
-		placePopoverAt(host, el.getBoundingClientRect(), popover.offsetHeight || 480);
+		placePopoverAt(host, getViewportRect(el), popover.offsetHeight || 480);
 
 		popoverEl = host;
 		popoverRoot = root;
@@ -1629,15 +1828,22 @@
 		// suspends when idle, so it can't be relied on to notice; a MutationObserver
 		// stays silent until the page actually mutates, then runs one cheap
 		// connectivity check. Revival is just syncSelection() re-running.
-		const domWatcher = new MutationObserver(() => {
+		const onDomChange = () => {
 			if (members.some(m => m.isConnected)) {
 				if (popover.classList.contains('rf-lost')) syncSelection();
 				return;
 			}
 			if (!popover.classList.contains('rf-lost')) setLostState();
-		});
-		domWatcher.observe(document.documentElement, { childList: true, subtree: true });
-		domWatchers.push(domWatcher);
+		};
+		const watchedDocuments = new Set(members.map(member => member.ownerDocument));
+		watchedDocuments.add(document);
+		for (const ownerDoc of watchedDocuments) {
+			if (ownerDoc?.documentElement) {
+				const watcher = new MutationObserver(onDomChange);
+				watcher.observe(ownerDoc.documentElement, { childList: true, subtree: true });
+				domWatchers.push(watcher);
+			}
+		}
 		ta.focus();
 	}
 
@@ -1652,6 +1858,7 @@
 	function captureMemberRef(el) {
 		return {
 			selector: describeElement(el),
+			framePath: framePathFor(el),
 			tag: el.tagName.toLowerCase(),
 			text: getTextSnippet(el),
 			a11y: getA11y(el),
@@ -1719,7 +1926,15 @@
 	}
 
 	function hidePopover() {
-		if (drag) { removeEventListener('pointermove', drag.move); removeEventListener('pointerup', drag.up); drag = null; }
+		if (drag) {
+			removeEventListener('pointermove', drag.move);
+			removeEventListener('pointerup', drag.up);
+			for (const doc of drag.documents) {
+				doc.removeEventListener('pointermove', drag.move);
+				doc.removeEventListener('pointerup', drag.up);
+			}
+			drag = null;
+		}
 		for (const w of domWatchers) w.disconnect();
 		domWatchers = [];
 		// A deliberately dragged position survives across popovers — that's the
@@ -1748,12 +1963,13 @@
 	// until Cancel/Esc resets it. Sub-4px movements are clicks, not drags.
 	function beginPopoverDrag(e, host) {
 		if (e.button != null && e.button !== 0) return;
-		const startClient = { x: e.clientX, y: e.clientY };
+		const startClient = topClientPoint(e);
 		let base = popoverOffset || currentAutoPosition(host);
 		let moved = false;
 		const move = (ev) => {
-			const dx = ev.clientX - startClient.x;
-			const dy = ev.clientY - startClient.y;
+			const point = topClientPoint(ev);
+			const dx = point.x - startClient.x;
+			const dy = point.y - startClient.y;
 			if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
 			moved = true;
 			popoverOffset = {
@@ -1765,22 +1981,31 @@
 		const up = () => {
 			removeEventListener('pointermove', move);
 			removeEventListener('pointerup', up);
+			for (const doc of drag.documents) {
+				doc.removeEventListener('pointermove', move);
+				doc.removeEventListener('pointerup', up);
+			}
 			drag = null;
 			host.style.userSelect = '';
 			document.documentElement.classList.remove('rf-dragging');
 			anchor?.wake?.();
 			if (moved) savePopoverOffset();
 		};
-		drag = { move, up };
+		const documents = new Set([...feedbackEventDocuments].filter(doc => doc !== document));
+		drag = { move, up, documents };
 		addEventListener('pointermove', move);
 		addEventListener('pointerup', up);
+		for (const doc of documents) {
+			doc.addEventListener('pointermove', move);
+			doc.addEventListener('pointerup', up);
+		}
 	}
 
 	// Where the automatic placement would put the popover right now — the drag
 	// baseline for the first drag before any offset exists.
 	function currentAutoPosition(host) {
 		const el = anchor?.getTarget?.() || null;
-		const r = el?.isConnected ? el.getBoundingClientRect() : { bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), top: 80 };
+		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), top: 80 };
 		const pos = placePopover(r, POPOVER_W, measurePopover());
 		return { x: pos.left, y: pos.top };
 	}
@@ -2025,9 +2250,11 @@
 			right.style.cssText = 'display:flex;gap:4px;flex-shrink:0';
 			// Post-submit undo: only when this annotation carries a restore point
 			// and at least one tweaked element still resolves here.
-			if (a.styleRestore && [a.styleRestore.primary, ...a.styleRestore.targets.map(t => t.selector)].some(sel => {
-				try { return !!document.querySelector(sel); } catch { return false; }
-			})) {
+			const restoreRefs = a.styleRestore && [
+				{ selector: a.styleRestore.primary, framePath: a.styleRestore.primaryFramePath },
+				...(Array.isArray(a.styleRestore.targets) ? a.styleRestore.targets : []),
+			];
+			if (restoreRefs?.some(resolveStoredMember)) {
 				const revBtn = document.createElement('button');
 				revBtn.className = 'rf-btn-icon rf-btn-revert';
 				revBtn.textContent = '⎌';
@@ -2109,7 +2336,7 @@
 	function positionOutline(el) {
 		if (!outlineEl) return;
 		// Sit 2px outside the element's own edge so the ring never covers content.
-		const r = el.getBoundingClientRect();
+		const r = getViewportRect(el);
 		outlineEl.style.top = r.top - 2 + 'px';
 		outlineEl.style.left = r.left - 2 + 'px';
 		outlineEl.style.width = r.width + 4 + 'px';
@@ -2146,7 +2373,7 @@
 	function enterPick(kind, sourceEl, sourceData, draft) {
 		hidePopover();
 		pickMode = { kind, sourceEl, sourceData, draft };
-		document.documentElement.style.cursor = 'crosshair';
+		setFeedbackCursor('crosshair');
 		syncChromeClickThrough();
 		showPickBanner(kind);
 	}
@@ -2155,7 +2382,7 @@
 		if (!pickMode) return;
 		const { kind, sourceEl, sourceData, draft } = pickMode;
 		pickMode = null;
-		document.documentElement.style.cursor = '';
+		setFeedbackCursor('');
 		syncChromeClickThrough();
 		hidePickBanner();
 		hideOutline();
@@ -2205,13 +2432,15 @@
 		const el = path.find(n => n && n.nodeType === 1) || e.target;
 		if (!el || el.nodeType !== 1) return null;
 		if (isRfChrome(el)) return null;
-		if (el === document.body || el === document.documentElement) return null;
+		const ownerDoc = el.ownerDocument || document;
+		if (el === ownerDoc.body || el === ownerDoc.documentElement) return null;
 		return el;
 	}
 
 	function captureDestination(el) {
 		return {
 			selector: describeElement(el),
+			framePath: framePathFor(el),
 			tag: el.tagName.toLowerCase(),
 			text: getTextSnippet(el),
 			a11y: getA11y(el),
@@ -2248,12 +2477,13 @@
 	// or paints opaque with no text. Class-name lists can't cover every framework;
 	// geometry + naming/paint is the portable signal.
 	const OVERLAY_NAME_RE = /modal|overlay|backdrop|drawer|scrim|dialog|sheet/i;
-	function isOverlayShell(el) {
-		if (el === document.body || el === document.documentElement) return false;
+	function isOverlayShell(el, ownerDoc = el.ownerDocument || document) {
+		if (el === ownerDoc.body || el === ownerDoc.documentElement) return false;
 		const cs = getComputedStyle(el);
 		if (cs.position !== 'fixed' && cs.position !== 'absolute') return false;
 		const r = el.getBoundingClientRect();
-		if (r.width < innerWidth * 0.9 || r.height < innerHeight * 0.9) return false;
+		const view = ownerDoc.defaultView || window;
+		if (r.width < view.innerWidth * 0.9 || r.height < view.innerHeight * 0.9) return false;
 		if (OVERLAY_NAME_RE.test(el.className) || OVERLAY_NAME_RE.test(el.id)) return true;
 		const bg = cs.backgroundColor;
 		const alpha = bg.startsWith('rgba') ? parseFloat(bg.slice(5, -1).split(',')[3]) : 1;
@@ -2264,7 +2494,8 @@
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
 		if (isRfChrome(target)) return null;
-		if (target === document.body || target === document.documentElement) {
+		const ownerDoc = target?.ownerDocument || document;
+		if (target === ownerDoc.body || target === ownerDoc.documentElement) {
 			// The click-through design drops chord clicks on our own chrome onto the
 			// page root — annotating <html> is never useful, and a full-viewport
 			// popover for it is exactly the "popup gone wrong" failure mode.
@@ -2275,14 +2506,14 @@
 			// Known overlay class names stay a fast-path signal; the shell heuristic
 			// catches frameworks that name their scrims differently.
 			if (el.matches?.('.modal-overlay,.drawer-overlay,.sheet-overlay')) return true;
-			return isOverlayShell(el);
+			return isOverlayShell(el, ownerDoc);
 		};
-		if (target && isPierceLayer(target) && typeof document.elementsFromPoint === 'function') {
-			for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
+		if (target && isPierceLayer(target) && typeof ownerDoc.elementsFromPoint === 'function') {
+			for (const el of ownerDoc.elementsFromPoint(e.clientX, e.clientY)) {
 				if (el.nodeType !== 1) continue;
 				if (isPierceLayer(el)) continue;
 				if (isRfChrome(el)) continue;
-				if (el === document.body || el === document.documentElement) continue;
+				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
 				target = el;
 				break;
 			}
@@ -2294,6 +2525,7 @@
 	function capturableEl(el) {
 		const data = {
 			selector: describeElement(el),
+			framePath: framePathFor(el),
 			tag: el.tagName.toLowerCase(),
 			text: getTextSnippet(el),
 			styles: getComputedStyles(el),
@@ -2388,7 +2620,7 @@
 	function positionSelectionMarkers() {
 		for (const { el, node } of selMarkers) {
 			if (!el.isConnected) { node.style.display = 'none'; continue; }
-			const r = el.getBoundingClientRect();
+			const r = getViewportRect(el);
 			node.style.display = 'block';
 			node.style.top = r.top + 'px';
 			node.style.left = r.left + 'px';
@@ -2445,14 +2677,14 @@
 	// Destination-select mode: registered before the chord listeners so
 	// stopImmediatePropagation here keeps the chord handlers out of it entirely.
 	for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'auxclick']) {
-		document.addEventListener(type, (e) => {
+		addFeedbackListener(type, (e) => {
 			if (!pickMode) return;
 			if (isRfChrome(e.target)) return;
 			killEvent(e);
 		}, CAPTURE);
 	}
 
-	document.addEventListener('click', (e) => {
+	addFeedbackListener('click', (e) => {
 		if (!pickMode) return;
 		if (isRfChrome(e.target)) return;
 		killEvent(e);
@@ -2501,9 +2733,9 @@
 		if (!hoverRaf) hoverRaf = requestAnimationFrame(flushHover);
 	}
 
-	document.addEventListener('mousemove', queueHover, true);
+	addFeedbackListener('mousemove', queueHover, true);
 
-	document.addEventListener('pointerdown', (e) => {
+	addFeedbackListener('pointerdown', (e) => {
 		if (!IS_CHORD(e) || isRfChrome(e.target)) return;
 		if (e.button != null && e.button !== 0) return;
 		armChordGesture(e);
@@ -2511,14 +2743,14 @@
 		addToChordGroup(e);
 	}, CAPTURE);
 
-	document.addEventListener('mousedown', (e) => {
+	addFeedbackListener('mousedown', (e) => {
 		if (!shouldCaptureChord(e)) return;
 		if (IS_CHORD(e)) armChordGesture(e);
 		killEvent(e);
 		addToChordGroup(e);
 	}, CAPTURE);
 
-	document.addEventListener('pointerup', (e) => {
+	addFeedbackListener('pointerup', (e) => {
 		if (!shouldCaptureChord(e)) return;
 		killEvent(e);
 	}, CAPTURE);
@@ -2526,7 +2758,7 @@
 	// While the chord is still held, a mouseup only adds to the selection: the
 	// gesture resolves on chord release (keyup) so multi-click grouping can build up.
 	// Releasing the chord before the mouse is the single-click case, handled here.
-	document.addEventListener('mouseup', (e) => {
+	addFeedbackListener('mouseup', (e) => {
 		if (!shouldCaptureChord(e)) return;
 		killEvent(e);
 		if (!isLiveChordGesture()) return;
@@ -2539,7 +2771,7 @@
 		});
 	}, CAPTURE);
 
-	document.addEventListener('click', (e) => {
+	addFeedbackListener('click', (e) => {
 		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
 		// Swallow the click so the host page never sees it, but leave the gesture
 		// open while the chord is down.
@@ -2548,7 +2780,7 @@
 		finishChordGesture(e);
 	}, CAPTURE);
 
-	document.addEventListener('auxclick', (e) => {
+	addFeedbackListener('auxclick', (e) => {
 		if (!shouldCaptureChord(e)) return;
 		killEvent(e);
 	}, CAPTURE);
@@ -2557,7 +2789,7 @@
 	let lastChordRelease = 0;
 	const DOUBLE_TAP_MS = 300;
 
-	document.addEventListener('keydown', (e) => {
+	addFeedbackListener('keydown', (e) => {
 		if (e.key === 'Escape') {
 			if (pickMode) { killEvent(e); exitPick(null); return; }
 			if (popoverEl) { cancelPopover(); return; }
@@ -2570,7 +2802,7 @@
 		}
 	}, true);
 
-	document.addEventListener('keyup', (e) => {
+	addFeedbackListener('keyup', (e) => {
 		if (chordWasActive && !IS_CHORD(e)) {
 			chordWasActive = false;
 			syncChromeClickThrough();
@@ -2607,7 +2839,7 @@
 		lastRouteUrl = location.href;
 		if (!popoverEl && !pickMode && !chordGesture) return;
 		pickMode = null;
-		document.documentElement.style.cursor = '';
+		setFeedbackCursor('');
 		hidePickBanner();
 		clearChordGesture();
 		hidePopover();
@@ -2637,6 +2869,7 @@
 	};
 
 	// --- Init ---
+	if (IS_TOP_FRAME) scanFeedbackFrames(document);
 	load();
 	loadPopoverOffset();
 	createFab();
