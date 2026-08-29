@@ -141,6 +141,7 @@ module.exports = async function run() {
   // --- v5.13: Svelte source mapping (fake __svelte_meta, no build chain) ---
   await page.evaluate(() => {
     const mk = (el, file, line, col) => { el.__svelte_meta = { loc: { file, line, column: col } }; };
+    mk(document.getElementById('row'), '/repo/src/lib/CardGrid.svelte', 18, 0);
     mk(document.getElementById('c1'), '/repo/src/lib/Card.svelte', 42, 8);
     document.getElementById('c1').__svelte_meta.parent =
       { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null };
@@ -161,14 +162,27 @@ module.exports = async function run() {
   const sv = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     const a = api.annotations[api.annotations.length - 1];
-    return { ref: a.source && a.source.ref, stack0: a.source && a.source.componentStack && a.source.componentStack[0].ref, md: api.markdown() };
+    return {
+      ref: a.source && a.source.ref,
+      stack0: a.source && a.source.componentStack && a.source.componentStack[0].ref,
+      components: a.source && a.source.components && a.source.components.map(c => c.ref),
+      md: api.markdown(),
+      json: api.json()
+    };
   });
+  const svJson = JSON.stringify(sv.json);
   check('svelte source maps file:line + route-aware stack',
-    sv.ref === 'src/lib/Card.svelte:42' && sv.stack0 === 'projects/+page.svelte:15',
+    sv.ref === 'src/lib/Card.svelte:42' && sv.stack0 === 'CardGrid.svelte:18',
     JSON.stringify({ ref: sv.ref, stack0: sv.stack0 }));
+  check('nested Svelte component trail keeps leaf-to-root order',
+    JSON.stringify(sv.components) === JSON.stringify(['Card.svelte:42', 'CardGrid.svelte:18', 'projects/+page.svelte:15']),
+    JSON.stringify(sv.components));
   check('editor deep link carries root, line and column',
     sv.md.includes('vscode://file/repo/src/lib/Card.svelte:42:8'),
     sv.md.split('\n').filter(l => l.includes('vscode')).join(' | '));
+  check('exports include computed visual context',
+    sv.md.includes('Looks:') && svJson.includes('"looks"') && !svJson.includes('"styles"'),
+    sv.md.split('\n').find(l => l.startsWith('Looks:')) || svJson.slice(0, 200));
 
   // Select similar must group by component file: c2 shares Card.svelte, c3/c4/c5 don't.
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
@@ -181,8 +195,71 @@ module.exports = async function run() {
   await new Promise(r => setTimeout(r, 200));
   const simRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
   check('select similar groups by component file', simRows === 2, 'rows=' + simRows + ' (signature fallback would sweep all cards)');
-  await page.keyboard.press('Escape');
+  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'nested group check'; p.querySelector('.rf-btn-primary').click(); })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const groupContext = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    const a = api.annotations[api.annotations.length - 1];
+    return { targetSource: a.targets?.[0]?.source, md: api.markdown() };
+  });
+  check('group members retain their component trail',
+    groupContext.targetSource?.components?.[0]?.ref === 'Card.svelte:42' && groupContext.md.includes('    Component: Card.svelte:42'),
+    JSON.stringify(groupContext.targetSource));
   await new Promise(r => setTimeout(r, 150));
+
+  // Metadata on a shadow host should still describe a target inside its root.
+  await page.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'shadow-card-host';
+    host.style.cssText = 'display:block;margin:20px;padding:12px;border:1px solid #777';
+    host.__svelte_meta = {
+      loc: { file: '/repo/src/lib/ShadowCard.svelte', line: 7, column: 2 },
+      parent: { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null }
+    };
+    const root = host.attachShadow({ mode: 'open' });
+    const button = document.createElement('button');
+    button.textContent = 'Shadow action';
+    root.appendChild(button);
+    document.body.appendChild(host);
+  });
+  const shadowPoint = await page.evaluate(() => {
+    const button = document.querySelector('#shadow-card-host').shadowRoot.querySelector('button');
+    const r = button.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await page.mouse.click(shadowPoint.x, shadowPoint.y);
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'shadow context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const shadowSource = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    return api.annotations[api.annotations.length - 1].source;
+  });
+  check('shadow-root targets inherit host component context',
+    shadowSource?.viaAncestor && shadowSource.components?.[0]?.ref === 'ShadowCard.svelte:7' && shadowSource.components?.[1]?.ref === 'projects/+page.svelte:15',
+    JSON.stringify(shadowSource));
+
+  await page.evaluate(() => {
+    const c = document.getElementById('c4');
+    c.setAttribute('aria-describedby', 'c4-help');
+    c.setAttribute('aria-expanded', 'true');
+    const help = document.createElement('span');
+    help.id = 'c4-help';
+    help.textContent = 'Opens the project details';
+    document.body.appendChild(help);
+  });
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c4');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 250));
+  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'accessibility context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+  await new Promise(r => setTimeout(r, 200));
+  const a11yContext = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.at(-1).a11y);
+  check('accessibility context includes descriptions and states',
+    a11yContext?.description === 'Opens the project details' && a11yContext.states?.expanded === 'true',
+    JSON.stringify(a11yContext));
 
   // Hostile page: a throwing __svelte_meta getter must not break capture.
   await page.evaluate(() => {
@@ -198,7 +275,10 @@ module.exports = async function run() {
   await new Promise(r => setTimeout(r, 150));
 
   // Svelte-looking page without dev metadata → explicit disclosure, not silence.
-  await page.evaluate(() => { document.body.classList.add('svelte-probe-class'); });
+  await page.evaluate(() => {
+    delete document.getElementById('row').__svelte_meta;
+    document.body.classList.add('svelte-probe-class');
+  });
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c4');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');

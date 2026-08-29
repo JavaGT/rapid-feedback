@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.16
+// @version      5.17
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
 // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
 // @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
 // @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
@@ -90,6 +91,10 @@
 		'width', 'height', 'border', 'border-radius', 'box-shadow', 'overflow',
 		'opacity', 'cursor', 'z-index'
 	];
+	const LOOK_PROPS = [
+		'display', 'font-size', 'line-height', 'color', 'background-color',
+		'padding', 'margin', 'border', 'border-radius', 'gap'
+	];
 	const ADJUSTABLE_PROPS = [
 		{ key: 'padding', label: 'Padding' },
 		{ key: 'margin', label: 'Margin' },
@@ -111,6 +116,7 @@
 	const POPOVER_W = 320;
 	const PANEL_W = 380;
 	const SIMILAR_MAX = 50;
+	const COMPONENT_MAX = 8;
 	const RF_CHROME_ATTR = 'data-rf-chrome';
 	const RF_PASSTHROUGH_ATTR = 'data-rf-passthrough';
 	// One declared ladder instead of magic numbers repeated at six call sites:
@@ -336,12 +342,16 @@
 	// the selector may drift.
 	function isSelectorAmbiguous(selector, el) {
 		if (!selector) return false;
-		try { return (el?.ownerDocument || document).querySelectorAll(selector).length > 1; } catch { return false; }
+		try {
+			const root = el?.getRootNode?.() || el?.ownerDocument || document;
+			return root.querySelectorAll(selector).length > 1;
+		} catch { return false; }
 	}
 
 	function describeElement(el) {
 		if (el.nodeType !== 1) return '';
 		const ownerDoc = el.ownerDocument || document;
+		const selectorRoot = el.getRootNode?.() || ownerDoc;
 		const chain = [];
 		let cur = el;
 		while (cur && cur.nodeType === 1 && cur !== ownerDoc.body && cur !== ownerDoc.documentElement) {
@@ -357,7 +367,11 @@
 			// Walk up only as far as needed: stop as soon as the tail we've built
 			// already identifies the element unambiguously.
 			if (resolvesUniquely(chain.join(' > '), el)) break;
-			cur = parentOf(cur);
+			const next = parentOf(cur);
+			// A selector rooted inside a shadow tree cannot include its host. Source
+			// metadata can cross that boundary, but the selector must remain resolvable.
+			if (!next || next.getRootNode?.() !== selectorRoot) break;
+			cur = next;
 		}
 		return chain.slice(-12).join(' > ');
 	}
@@ -377,7 +391,11 @@
 	}
 
 	function parentOf(el) {
-		let p = el.parentElement || el.parentNode;
+		// parentElement stops at a shadow root. Do not return the DocumentFragment
+		// itself; cross that boundary to its host so selectors and source metadata
+		// describe the same composed tree.
+		let p = el.parentElement;
+		if (!p && el.parentNode?.nodeType === 1) p = el.parentNode;
 		if (!p && el.getRootNode) {
 			const r = el.getRootNode();
 			if (r?.host) p = r.host;
@@ -398,6 +416,17 @@
 			if (v && v !== 'none' && v !== 'normal' && v !== '0px' && v !== 'auto') styles[prop] = v;
 		}
 		return styles;
+	}
+
+	// Keep Markdown readable while retaining the complete computed-style snapshot
+	// for storage and the live Styles tab.
+	function getLooks(styles) {
+		if (!styles) return null;
+		const looks = {};
+		for (const prop of LOOK_PROPS) {
+			if (styles[prop]) looks[prop] = String(styles[prop]).slice(0, 100);
+		}
+		return Object.keys(looks).length ? looks : null;
 	}
 
 	function getBoundingRect(el) {
@@ -434,10 +463,30 @@
 	// __svelte_meta is page-owned: a hostile page can define throwing getters on
 	// it, so every read is guarded. The .parent chain is Svelte-internal, not a
 	// stable API — traversal fails soft and is capped.
+	function frameFromSvelteNode(node, fallbackType) {
+		try {
+			const loc = node?.loc || node;
+			const rawFile = loc?.file || node?.file;
+			if (!rawFile) return null;
+			const file = relSourceFile(rawFile);
+			const rawLine = loc?.line ?? node?.line;
+			const rawColumn = loc?.column ?? node?.column;
+			const line = rawLine == null || rawLine === '' ? null : Number(rawLine);
+			const column = rawColumn == null || rawColumn === '' ? null : Number(rawColumn);
+			return {
+				type: node?.type || fallbackType || 'component',
+				file,
+				line: Number.isFinite(line) ? line : null,
+				column: Number.isFinite(column) ? column : null,
+				ref: frameRef(file, Number.isFinite(line) ? line : null)
+			};
+		} catch { return null; }
+	}
+
 	function readSvelteMeta(node) {
 		try {
 			const meta = node && node.__svelte_meta;
-			if (meta && meta.loc && meta.loc.file) return meta;
+			return meta && frameFromSvelteNode(meta) ? meta : null;
 		} catch {}
 		return null;
 	}
@@ -447,7 +496,7 @@
 		let guard = 0;
 		while (cur && cur.nodeType === 1 && guard++ < 50) {
 			if (readSvelteMeta(cur)) return cur;
-			cur = cur.parentElement;
+			cur = parentOf(cur);
 		}
 		return null;
 	}
@@ -472,7 +521,7 @@
 	function frameRef(file, line) {
 		const base = baseName(file);
 		if (!base) return '';
-		const suffix = line ? ':' + line : '';
+		const suffix = line != null ? ':' + line : '';
 		if (!GENERIC_ROUTE_FILE_RE.test(base)) return base + suffix;
 		const parts = String(file).replace(/\\/g, '/').split('/');
 		const dir = parts[parts.length - 2];
@@ -481,8 +530,44 @@
 
 	// "Is this a Svelte app at all?" heuristic via scoped classes. Not cached:
 	// Svelte content can mount long after first capture on SPAs.
-	function looksLikeSvelte(ownerDoc = document) {
-		try { return ownerDoc.querySelector('[class*="svelte-"]') !== null; } catch { return false; }
+	function looksLikeSvelte(ownerDoc = document, startEl) {
+		try {
+			let cur = startEl;
+			let guard = 0;
+			while (cur && cur.nodeType === 1 && guard++ < 50) {
+				if (classNameOf(cur).split(/\s+/).some(cls => /^svelte-[a-z0-9]+$/i.test(cls))) return true;
+				cur = parentOf(cur);
+			}
+			return ownerDoc.querySelector('[class*="svelte-"]') !== null;
+		} catch { return false; }
+	}
+
+	function componentFramesFor(el, metaEl, meta) {
+		const frames = [];
+		const add = (frame) => {
+			if (!frame || frames.some(existing => existing.file === frame.file)) return;
+			frames.push(frame);
+		};
+
+		// The current metadata gives the precise source location. Walk the composed
+		// DOM first so nested component roots stay in leaf-to-root order, then use the
+		// metadata parent chain to fill gaps when a compiler/runtime omits a DOM frame.
+		add(frameFromSvelteNode(meta, 'component'));
+		let cur = parentOf(metaEl || el);
+		let guard = 0;
+		while (cur && cur.nodeType === 1 && guard++ < 50) {
+			add(frameFromSvelteNode(readSvelteMeta(cur), 'component'));
+			cur = parentOf(cur);
+		}
+
+		let parent = null;
+		try { parent = meta?.parent || null; } catch {}
+		guard = 0;
+		while (parent && guard++ < 12) {
+			add(frameFromSvelteNode(parent, 'component'));
+			try { parent = parent.parent || null; } catch { parent = null; }
+		}
+		return frames.length ? frames.slice(0, COMPONENT_MAX) : null;
 	}
 
 	function getSourceLoc(el) {
@@ -490,27 +575,21 @@
 		if (!metaEl) {
 			// No dev metadata. If the page still smells like Svelte, say why instead
 			// of going quiet — reviewers otherwise assume the tool is broken.
-			return looksLikeSvelte(el.ownerDocument) ? { status: 'svelte-production-build' } : null;
+			return looksLikeSvelte(el.ownerDocument, el) ? { status: 'svelte-production-build' } : null;
 		}
 		const meta = readSvelteMeta(metaEl);
-		const loc = meta.loc;
-		const file = relSourceFile(loc.file);
-		const stack = [];
-		let node = meta.parent;
-		let guard = 0;
-		while (node && guard++ < 12) {
-			let f, ln, tp;
-			try { f = node.file; ln = node.line; tp = node.type; } catch {}
-			if (f) stack.push({ type: tp || 'component', ref: frameRef(f, ln) });
-			try { node = node.parent; } catch { node = null; }
-		}
+		const primary = frameFromSvelteNode(meta, 'component');
+		if (!primary) return null;
+		const components = componentFramesFor(el, metaEl, meta);
 		return {
-			file,
-			line: loc.line,
-			column: loc.column,
-			ref: file + ':' + loc.line,
+			file: primary.file,
+			line: primary.line,
+			column: primary.column,
+			ref: primary.file + (primary.line != null ? ':' + primary.line : ''),
 			viaAncestor: metaEl !== el,
-			componentStack: stack.length ? stack : null
+			components,
+			// Keep the original parent-only field for consumers already using it.
+			componentStack: components?.slice(1).map(frame => ({ type: frame.type, ref: frame.ref })) || null
 		};
 	}
 
@@ -532,18 +611,38 @@
 		const out = {};
 		const role = el.getAttribute('role') || implicitRole(el);
 		if (role) out.role = role;
-		const label = el.getAttribute('aria-label') || labelFromLabelledBy(el) || el.getAttribute('alt') || el.getAttribute('title');
+		const tag = el.tagName.toLowerCase();
+		const label = el.getAttribute('aria-label') || labelFromLabelledBy(el) || el.getAttribute('alt') || el.getAttribute('title')
+			|| (/^(button|a|summary|h[1-6])$/.test(tag) ? (el.textContent || '').trim() : '');
 		if (label) out.name = label.trim().replace(/\s+/g, ' ').slice(0, 80);
+		const description = textFromIds(el, 'aria-describedby');
+		if (description) out.description = description.slice(0, 120);
+		const headingLevel = /^h([1-6])$/.exec(tag)?.[1] || (role === 'heading' ? el.getAttribute('aria-level') : null);
+		if (headingLevel) out.level = Number(headingLevel);
 		const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || el.getAttribute('data-cy');
 		if (testId) out.testId = testId;
+		const states = {};
+		for (const attr of ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-current', 'aria-disabled']) {
+			const value = el.getAttribute(attr);
+			if (value != null) states[attr.slice(5)] = value;
+		}
+		if (el.disabled) states.disabled = 'true';
+		if (el.required) states.required = 'true';
+		if (Object.keys(states).length) out.states = states;
 		return Object.keys(out).length ? out : null;
 	}
 
 	function labelFromLabelledBy(el) {
-		const id = el.getAttribute('aria-labelledby');
-		if (!id) return null;
-		const ref = (el.ownerDocument || document).getElementById(id.split(/\s+/)[0]);
-		return ref ? (ref.textContent || '').trim() : null;
+		return textFromIds(el, 'aria-labelledby');
+	}
+
+	function textFromIds(el, attr) {
+		const ids = el.getAttribute(attr);
+		if (!ids) return null;
+		const ownerDoc = el.ownerDocument || document;
+		const text = ids.split(/\s+/).map(id => ownerDoc.getElementById(id)).filter(Boolean)
+			.map(ref => (ref.textContent || '').trim()).filter(Boolean).join(' ');
+		return text || null;
 	}
 
 	function implicitRole(el) {
@@ -592,6 +691,38 @@
 
 	function compactFramePath(path) {
 		return (Array.isArray(path) ? path : []).map(frame => compactAncestorChain(frame?.selector, 4)).filter(Boolean).join(' > ');
+	}
+
+	function componentTrail(source) {
+		if (!source) return '';
+		if (Array.isArray(source.components) && source.components.length) {
+			return source.components.map(frame => frame?.ref).filter(Boolean).join(' \u2190 ');
+		}
+		const refs = [];
+		if (source.file) refs.push(frameRef(source.file, source.line));
+		if (Array.isArray(source.componentStack)) refs.push(...source.componentStack.map(frame => frame?.ref));
+		return refs.filter(Boolean).join(' \u2190 ');
+	}
+
+	function annotationLooks(a) {
+		const looks = a?.looks;
+		return looks && typeof looks === 'object' && !Array.isArray(looks) && Object.keys(looks).length
+			? looks : getLooks(a?.styles);
+	}
+
+	function sourceForJSON(source) {
+		if (!source || !Array.isArray(source.components)) return source || null;
+		return {
+			...source,
+			components: source.components.filter(frame => frame && typeof frame === 'object').map(frame => ({
+				...frame,
+				editorUrl: editorUrlFor(frame.file, frame.line, frame.column)
+			}))
+		};
+	}
+
+	function formatLooks(looks) {
+		return Object.entries(looks || {}).map(([key, value]) => key + '=' + value).join('; ');
 	}
 
 	function routeFromUrl(url) {
@@ -695,6 +826,7 @@
 			styleRestore: data.styleRestore || null,
 			source: data.source || null,
 			a11y: data.a11y || null,
+			looks: data.looks || null,
 			destination: data.destination || null,
 			targets: data.targets || null
 		};
@@ -719,7 +851,8 @@
 			if (a.comment) lines.push(a.comment);
 			if (a.source?.ref) {
 				lines.push('Source: ' + a.source.ref + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
-				if (a.source.componentStack?.length) lines.push('Component: ' + a.source.componentStack.map(s => s.ref).join(' \u2190 '));
+				const trail = componentTrail(a.source);
+				if (trail) lines.push('Component: ' + trail);
 				const eu = editorUrlFor(a.source.file, a.source.line, a.source.column);
 				if (eu) lines.push('Open: ' + eu);
 			} else if (a.source?.status === 'svelte-production-build') {
@@ -730,8 +863,13 @@
 				if (a.a11y.role) bits.push('role=' + a.a11y.role);
 				if (a.a11y.name) bits.push('name="' + a.a11y.name + '"');
 				if (a.a11y.testId) bits.push('testid=' + a.a11y.testId);
+				if (a.a11y.level) bits.push('level=' + a.a11y.level);
+				if (a.a11y.description) bits.push('description="' + a.a11y.description + '"');
+				if (a.a11y.states) bits.push('state=' + Object.entries(a.a11y.states).map(([key, value]) => key + ':' + value).join(','));
 				if (bits.length) lines.push('A11y: ' + bits.join(' '));
 			}
+			const looks = annotationLooks(a);
+			if (looks) lines.push('Looks: ' + formatLooks(looks));
 			if (isSelectorAmbiguous(a.selector, resolveStoredMember(a))) lines.push('⚠ Selector matches multiple elements right now — it may drift');
 			const where = compactAncestorChain(a.selector);
 			if (where) lines.push('Where: ' + where);
@@ -745,6 +883,12 @@
 				if (frame) lines.push('  Frame: ' + frame);
 				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
+				if (d.source?.ref) {
+					lines.push('  Source: ' + d.source.ref);
+					const trail = componentTrail(d.source);
+					if (trail) lines.push('  Component: ' + trail);
+				}
+				if (d.looks) lines.push('  Looks: ' + formatLooks(d.looks));
 			}
 			// Every selected element is actionable, so each one gets its own line with
 			// the selector a developer would need — not just a label.
@@ -765,9 +909,12 @@
 				if (frame) lines.push('    Frame: ' + frame);
 					if (t.source?.ref) {
 						lines.push('    Source: ' + t.source.ref);
+						const trail = componentTrail(t.source);
+						if (trail) lines.push('    Component: ' + trail);
 						const eu = editorUrlFor(t.source.file, t.source.line, t.source.column);
 						if (eu) lines.push('    Open: ' + eu);
 					}
+					if (t.looks) lines.push('    Looks: ' + formatLooks(t.looks));
 				}
 			}
 			if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
@@ -797,7 +944,7 @@
 				comment: a.comment,
 				text: a.text || null,
 				label: targetLabel(a),
-				source: a.source || null,
+				source: sourceForJSON(a.source),
 				editorUrl: a.source?.ref ? editorUrlFor(a.source.file, a.source.line, a.source.column) : null,
 				a11y: a.a11y || null,
 				selector: a.selector || null,
@@ -805,14 +952,18 @@
 				where: compactAncestorChain(a.selector) || null,
 				tag: a.tag || null,
 				rect: a.rect || null,
+				looks: annotationLooks(a),
 				adjustedStyles: a.adjustedStyles || null,
 				styleRestore: a.styleRestore || null,
 				selectorAmbiguous: isSelectorAmbiguous(a.selector, resolveStoredMember(a)),
 				destination: a.destination ? {
 					selector: a.destination.selector,
 					framePath: a.destination.framePath || null,
+					tag: a.destination.tag || null,
 					text: a.destination.text || null,
 					a11y: a.destination.a11y,
+					source: sourceForJSON(a.destination.source),
+					looks: a.destination.looks || null,
 					where: compactAncestorChain(a.destination.selector, 4)
 				} : null,
 				groupSize: a.targets?.length ? a.targets.length + 1 : 1,
@@ -824,8 +975,9 @@
 					a11y: t.a11y || null,
 					where: compactAncestorChain(t.selector) || null,
 					rect: t.rect || null,
-					source: t.source || null,
-					editorUrl: t.source?.ref ? editorUrlFor(t.source.file, t.source.line, t.source.column) : null
+					source: sourceForJSON(t.source),
+					editorUrl: t.source?.ref ? editorUrlFor(t.source.file, t.source.line, t.source.column) : null,
+					looks: t.looks || null
 				})) : null,
 				hints: extractHints(a)
 			}))
@@ -1284,9 +1436,16 @@
 				: targetLabel({ ...curData, comment: '' });
 			if (curData.source?.ref) {
 				sourceEl.style.display = 'block';
-				sourceEl.textContent = '◈ ' + frameRef(curData.source.file) + ' · ' + curData.source.ref + (curData.source.viaAncestor ? ' (ancestor)' : '');
+				const trail = componentTrail(curData.source);
+				sourceEl.textContent = '◈ ' + (trail || curData.source.ref) + (curData.source.viaAncestor ? ' (ancestor)' : '');
+				sourceEl.title = curData.source.ref + (trail ? ' | ' + trail : '');
+			} else if (curData.source?.status === 'svelte-production-build') {
+				sourceEl.style.display = 'block';
+				sourceEl.textContent = '◈ Svelte production build · source mapping unavailable';
+				sourceEl.title = 'Run the page in Svelte development mode to expose component source locations';
 			} else {
 				sourceEl.style.display = 'none';
+				sourceEl.title = '';
 			}
 			selEl.textContent = compactAncestorChain(curData.selector) || curData.selector;
 			if (curData.text) {
@@ -1856,6 +2015,7 @@
 
 	// A selected element, frozen into the shape exports and storage read.
 	function captureMemberRef(el) {
+		const styles = getComputedStyles(el);
 		return {
 			selector: describeElement(el),
 			framePath: framePathFor(el),
@@ -1864,6 +2024,7 @@
 			a11y: getA11y(el),
 			rect: getBoundingRect(el),
 			source: getSourceLoc(el),
+			looks: getLooks(styles),
 		};
 	}
 
@@ -2438,6 +2599,7 @@
 	}
 
 	function captureDestination(el) {
+		const styles = getComputedStyles(el);
 		return {
 			selector: describeElement(el),
 			framePath: framePathFor(el),
@@ -2445,6 +2607,8 @@
 			text: getTextSnippet(el),
 			a11y: getA11y(el),
 			rect: getBoundingRect(el),
+			source: getSourceLoc(el),
+			looks: getLooks(styles),
 		};
 	}
 
@@ -2523,12 +2687,14 @@
 	}
 
 	function capturableEl(el) {
+		const styles = getComputedStyles(el);
 		const data = {
 			selector: describeElement(el),
 			framePath: framePathFor(el),
 			tag: el.tagName.toLowerCase(),
 			text: getTextSnippet(el),
-			styles: getComputedStyles(el),
+			styles,
+			looks: getLooks(styles),
 			rect: getBoundingRect(el),
 			source: getSourceLoc(el),
 			a11y: getA11y(el)

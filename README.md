@@ -19,7 +19,8 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Hardened selectors** — attribute values are escaped so quotes/backslashes can't break them; the `data-testid` / `data-test` / `data-cy` family outranks generic attributes; machine-generated ids (hashes, React uids) are skipped; and Tailwind noise (variant prefixes, arbitrary values, fractions, negatives, Svelte hashes) never reaches a selector
 - **Closed shadow roots** — host-page scripts can't reach into the feedback UI, and chrome lives on `<html>` so hydration wipes can't remove it; a corrupt saved row is skipped instead of wiping the session
 - **Refreshed theme** — green accent, rounded cards, pill category chips, softer shadows
-- **Svelte-aware feedback** — component name in the popover header, route-disambiguated refs (`projects/+page.svelte:15`), per-member Source lines in group exports, `setProjectRoot()` for clickable `vscode://file/…:line:col` links, "Select similar" grouped by component file, and an explicit note when a production build hides source mapping
+- **Svelte-aware feedback** — leaf-to-root nested component trails in the popover and exports, route-disambiguated refs (`projects/+page.svelte:15`), per-member and destination Source lines, `setProjectRoot()` for clickable `vscode://file/…:line:col` links, "Select similar" grouped by component file, and an explicit note when a production build hides source mapping
+- **Richer context** — curated computed visual styles, accessible descriptions and control states, heading levels, and structured context in JSON for developers diagnosing layout and interaction issues
 
 ## Interactions
 
@@ -52,6 +53,7 @@ Env: 1440×900 · Chrome on macOS
 The user's comment goes here — clearly distinguished from the element text above.
 
 A11y: role=link name="Files"
+Looks: display=inline-flex; color=rgb(…); padding=8px 12px; border-radius=6px
 Where: div.sections > a.section-link[href="/app/projects/.../files"] > div.link-main
 Rect: 434×21
 

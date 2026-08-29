@@ -39,6 +39,12 @@ module.exports = async function run() {
   check('single: markers cleared on close', await page.evaluate(`${MARKERS}`) === 0);
 
   // --- Destination pick round-trip preserves a group draft ---
+  await page.evaluate(() => {
+    document.getElementById('c4').__svelte_meta = {
+      loc: { file: '/repo/src/lib/DetailsPanel.svelte', line: 24, column: 4 },
+      parent: { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null }
+    };
+  });
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c1'); await chordClick('#c2');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
@@ -78,6 +84,11 @@ module.exports = async function run() {
   check('markdown has no duplicated text', !/— “/.test(md), md);
   check('json carries groupSize', js.items[0].groupSize === 2, JSON.stringify(js.items[0]).slice(0, 400));
   check('json members carry where + rect', js.items[0].targets.every(t => t.where && t.rect), JSON.stringify(js.items[0].targets));
+  check('destination retains source and component context',
+    js.items[0].destination.source?.ref === 'src/lib/DetailsPanel.svelte:24' &&
+      js.items[0].destination.source.components?.[1]?.ref === 'projects/+page.svelte:15' &&
+      /  Component: DetailsPanel\.svelte:24/.test(md),
+    JSON.stringify(js.items[0].destination));
   console.log('\n--- MARKDOWN ---\n' + md + '\n----------------');
 
 	return finish();
