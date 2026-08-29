@@ -395,7 +395,6 @@
 		// itself; cross that boundary to its host so selectors and source metadata
 		// describe the same composed tree.
 		let p = el.parentElement;
-		if (!p && el.parentNode?.nodeType === 1) p = el.parentNode;
 		if (!p && el.getRootNode) {
 			const r = el.getRootNode();
 			if (r?.host) p = r.host;
@@ -543,29 +542,59 @@
 	}
 
 	function componentFramesFor(el, metaEl, meta) {
-		const frames = [];
-		const add = (frame) => {
-			if (!frame || frames.some(existing => existing.file === frame.file)) return;
-			frames.push(frame);
+		const primary = frameFromSvelteNode(meta, 'component');
+		const metaFrames = [];
+		const addMeta = (frame) => {
+			if (!frame || metaFrames.some(existing => existing.file === frame.file && existing.line === frame.line && existing.column === frame.column)) return;
+			metaFrames.push(frame);
 		};
-
-		// The current metadata gives the precise source location. Walk the composed
-		// DOM first so nested component roots stay in leaf-to-root order, then use the
-		// metadata parent chain to fill gaps when a compiler/runtime omits a DOM frame.
-		add(frameFromSvelteNode(meta, 'component'));
-		let cur = parentOf(metaEl || el);
-		let guard = 0;
-		while (cur && cur.nodeType === 1 && guard++ < 50) {
-			add(frameFromSvelteNode(readSvelteMeta(cur), 'component'));
-			cur = parentOf(cur);
-		}
+		addMeta(primary);
 
 		let parent = null;
 		try { parent = meta?.parent || null; } catch {}
-		guard = 0;
+		let guard = 0;
 		while (parent && guard++ < 12) {
-			add(frameFromSvelteNode(parent, 'component'));
+			addMeta(frameFromSvelteNode(parent, 'component'));
 			try { parent = parent.parent || null; } catch { parent = null; }
+		}
+
+		// DOM metadata is useful when the runtime parent chain omits a nested
+		// component. Keep one frame per file in this stream because Svelte stamps
+		// different source locations onto ordinary elements in the same component.
+		const domFrames = [];
+		const addDom = (frame) => {
+			if (!frame || domFrames.some(existing => existing.file === frame.file)) return;
+			domFrames.push(frame);
+		};
+		addDom(primary);
+		let cur = parentOf(metaEl || el);
+		guard = 0;
+		while (cur && cur.nodeType === 1 && guard++ < 50) {
+			addDom(frameFromSvelteNode(readSvelteMeta(cur), 'component'));
+			cur = parentOf(cur);
+		}
+
+		// Start with the explicit runtime chain, then place DOM-only frames between
+		// their nearest known neighbors. This preserves leaf-to-root order in either
+		// direction of partial metadata.
+		const frames = [...metaFrames];
+		for (let i = 0; i < domFrames.length; i++) {
+			const frame = domFrames[i];
+			if (frames.some(existing => existing.file === frame.file)) continue;
+			let insertAt = frames.length;
+			for (let j = i - 1; j >= 0; j--) {
+				const anchor = frames.findIndex(existing => existing.file === domFrames[j].file);
+				if (anchor >= 0) { insertAt = anchor + 1; break; }
+			}
+			if (insertAt !== frames.length) {
+				frames.splice(insertAt, 0, frame);
+				continue;
+			}
+			for (let j = i + 1; j < domFrames.length; j++) {
+				const anchor = frames.findIndex(existing => existing.file === domFrames[j].file);
+				if (anchor >= 0) { insertAt = anchor; break; }
+			}
+			frames.splice(insertAt, 0, frame);
 		}
 		return frames.length ? frames.slice(0, COMPONENT_MAX) : null;
 	}
@@ -617,14 +646,15 @@
 		if (label) out.name = label.trim().replace(/\s+/g, ' ').slice(0, 80);
 		const description = textFromIds(el, 'aria-describedby');
 		if (description) out.description = description.slice(0, 120);
-		const headingLevel = /^h([1-6])$/.exec(tag)?.[1] || (role === 'heading' ? el.getAttribute('aria-level') : null);
-		if (headingLevel) out.level = Number(headingLevel);
+		const rawHeadingLevel = /^h([1-6])$/.exec(tag)?.[1] || (role === 'heading' ? el.getAttribute('aria-level') : null);
+		const headingLevel = Number(rawHeadingLevel);
+		if (Number.isInteger(headingLevel) && headingLevel >= 1 && headingLevel <= 6) out.level = headingLevel;
 		const testId = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || el.getAttribute('data-cy');
 		if (testId) out.testId = testId;
 		const states = {};
 		for (const attr of ['aria-expanded', 'aria-pressed', 'aria-checked', 'aria-selected', 'aria-current', 'aria-disabled']) {
 			const value = el.getAttribute(attr);
-			if (value != null) states[attr.slice(5)] = value;
+			if (value != null && !(attr === 'aria-current' && value === 'false')) states[attr.slice(5)] = value;
 		}
 		if (el.disabled) states.disabled = 'true';
 		if (el.required) states.required = 'true';
@@ -693,13 +723,14 @@
 		return (Array.isArray(path) ? path : []).map(frame => compactAncestorChain(frame?.selector, 4)).filter(Boolean).join(' > ');
 	}
 
-	function componentTrail(source) {
+	function componentTrail(source, includePrimary) {
 		if (!source) return '';
 		if (Array.isArray(source.components) && source.components.length) {
-			return source.components.map(frame => frame?.ref).filter(Boolean).join(' \u2190 ');
+			const frames = includePrimary ? source.components : source.components.slice(1);
+			return frames.map(frame => frame?.ref).filter(Boolean).join(' \u2190 ');
 		}
 		const refs = [];
-		if (source.file) refs.push(frameRef(source.file, source.line));
+		if (includePrimary && source.file) refs.push(frameRef(source.file, source.line));
 		if (Array.isArray(source.componentStack)) refs.push(...source.componentStack.map(frame => frame?.ref));
 		return refs.filter(Boolean).join(' \u2190 ');
 	}
@@ -1436,7 +1467,7 @@
 				: targetLabel({ ...curData, comment: '' });
 			if (curData.source?.ref) {
 				sourceEl.style.display = 'block';
-				const trail = componentTrail(curData.source);
+				const trail = componentTrail(curData.source, true);
 				sourceEl.textContent = '◈ ' + (trail || curData.source.ref) + (curData.source.viaAncestor ? ' (ancestor)' : '');
 				sourceEl.title = curData.source.ref + (trail ? ' | ' + trail : '');
 			} else if (curData.source?.status === 'svelte-production-build') {

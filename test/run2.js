@@ -87,7 +87,7 @@ module.exports = async function run() {
   check('destination retains source and component context',
     js.items[0].destination.source?.ref === 'src/lib/DetailsPanel.svelte:24' &&
       js.items[0].destination.source.components?.[1]?.ref === 'projects/+page.svelte:15' &&
-      /  Component: DetailsPanel\.svelte:24/.test(md),
+      /  Component: projects\/\+page\.svelte:15/.test(md),
     JSON.stringify(js.items[0].destination));
   console.log('\n--- MARKDOWN ---\n' + md + '\n----------------');
 

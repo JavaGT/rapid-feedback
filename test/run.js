@@ -146,6 +146,9 @@ module.exports = async function run() {
     document.getElementById('c1').__svelte_meta.parent =
       { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null };
     mk(document.getElementById('c2'), '/repo/src/lib/Card.svelte', 42, 8);
+    document.getElementById('c2').__svelte_meta.parent =
+      { file: '/repo/src/lib/CardGrid.svelte', line: 18, type: 'component', parent:
+        { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null } };
     mk(document.getElementById('c3'), '/repo/src/lib/Other.svelte', 9, 0);
     window.__SCOPE_FEEDBACK_API__.setProjectRoot('/repo');
   });
@@ -203,7 +206,7 @@ module.exports = async function run() {
     return { targetSource: a.targets?.[0]?.source, md: api.markdown() };
   });
   check('group members retain their component trail',
-    groupContext.targetSource?.components?.[0]?.ref === 'Card.svelte:42' && groupContext.md.includes('    Component: Card.svelte:42'),
+    groupContext.targetSource?.components?.[0]?.ref === 'Card.svelte:42' && groupContext.md.includes('    Component: CardGrid.svelte:18 \u2190 projects/+page.svelte:15'),
     JSON.stringify(groupContext.targetSource));
   await new Promise(r => setTimeout(r, 150));
 
@@ -260,6 +263,10 @@ module.exports = async function run() {
   check('accessibility context includes descriptions and states',
     a11yContext?.description === 'Opens the project details' && a11yContext.states?.expanded === 'true',
     JSON.stringify(a11yContext));
+  await page.evaluate(() => {
+    document.getElementById('shadow-card-host')?.remove();
+    document.getElementById('c4-help')?.remove();
+  });
 
   // Hostile page: a throwing __svelte_meta getter must not break capture.
   await page.evaluate(() => {
