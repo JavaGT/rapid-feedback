@@ -68,7 +68,11 @@ module.exports = async function run6() {
 		check('fresh popover honors persisted offset', Math.abs(reopened.x - after.x) < 3 && Math.abs(reopened.y - after.y) < 3,
 			JSON.stringify(reopened));
 
-		// Esc resets the offset and closes the popover.
+		// Esc resets the offset and closes the popover. Focus sits in the comment
+		// box, so the first Escape only blurs (preserving the draft) and the
+		// second one closes.
+		await page.keyboard.press('Escape');
+		await new Promise(r => setTimeout(r, 100));
 		await page.keyboard.press('Escape');
 		await new Promise(r => setTimeout(r, 100));
 		check('Esc clears the saved offset', await page.evaluate(() => !localStorage.getItem('rf_popover_offset_v1')));
