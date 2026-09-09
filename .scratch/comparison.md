@@ -1,3 +1,5 @@
+> Status 2026-09-10: the compared build `luna-redesign/` was deleted as a delivered experiment in 86ce2e2 (#6, #10) — paths below are historical.
+
 # Comparison: Original Rapid Feedback vs. Luna's Independent Redesign
 
 Luna rebuilt the app from a written brief alone (`.scratch/app-brief.md`) without seeing the original code.

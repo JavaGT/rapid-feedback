@@ -1,3 +1,5 @@
+> Status 2026-09-10: the compared build `deepseek-redesign/` was deleted as a delivered experiment in 86ce2e2 (#6, #10) — paths below are historical.
+
 # Comparison: DeepSeek Flash's Independent Rebuild — vs. the Original and Luna's
 
 Same exercise as Luna: DeepSeek v4 Flash got only `.scratch/app-brief.md` (never saw the original, the tests, or `luna-redesign/`). It delivered `deepseek-redesign/rapid-feedback.user.js` (2,330 lines) plus a 147-line DESIGN.md.

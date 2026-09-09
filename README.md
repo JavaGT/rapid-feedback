@@ -59,6 +59,8 @@ Rect: 434×21
 
 → Destination: div.other-section > a.other-link
   Text: “Grades”
+  Source: src/lib/components/Sidebar.svelte:41:9
+  Open: vscode://file/src/lib/components/Sidebar.svelte:41:9
 Group: 3 elements (this + 2)
   • a#first-link "First"
     Where: div.sections > a#first-link
