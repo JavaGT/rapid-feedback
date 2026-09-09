@@ -61,6 +61,37 @@ module.exports = async function run() {
 		check('undo re-seats the primary onto a still-selected element',
 			!!a && /c1/.test(a.selector), 'saved selector=' + (a && a.selector));
 
+		// Regression (tracker #4): a Svelte-like meta shaped {file} without {loc}
+		// used to throw inside directSvelteFile (meta.loc.file), silently killing
+		// Select similar. Same-file siblings must still group, with no pageerror.
+		await page.goto('file://' + path.join(__dirname, 'page.html'));
+		await page.evaluate(SCRIPT);
+		await page.evaluate(() => localStorage.clear());
+		await page.evaluate(`(() => {
+			const group = document.createElement('div');
+			group.style.cssText = 'position:fixed;top:20px;left:20px;';
+			for (let i = 0; i < 3; i++) {
+				const d = document.createElement('div');
+				d.className = 'locless-' + i;
+				d.textContent = 'locless sibling ' + i;
+				d.style.cssText = 'width:90px;height:26px;background:#eee;';
+				d.__svelte_meta = { file: 'widget.svelte' };
+				group.appendChild(d);
+			}
+			document.body.appendChild(group);
+		})()`);
+		await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+		await chordClick('.locless-1');
+		await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+		await new Promise(r => setTimeout(r, 250));
+		errors.length = 0;
+		await page.evaluate(clickSimilar);
+		await new Promise(r => setTimeout(r, 200));
+		const loclessRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
+		check('select similar survives a {file}-without-{loc} Svelte meta',
+			errors.length === 0 && loclessRows === 3,
+			'pageerrors=' + JSON.stringify(errors) + ' rows=' + loclessRows);
+
 		return finish();
 	});
 };

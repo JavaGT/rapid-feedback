@@ -864,6 +864,22 @@
 	}
 
 	// --- Export: v5 format (text-first, Tweak: block, compact group refs) ---
+
+	// The "Source:" block for a resolved location, kept in one copy for all
+	// three export sites (primary, destination, group targets) — they were
+	// hand-copied and had already drifted (the destination copy lost Open:).
+	function pushSourceBlock(lines, source, pad) {
+		if (source?.ref) {
+			lines.push(pad + 'Source: ' + source.ref + (source.viaAncestor ? ' (nearest ancestor with source)' : ''));
+			const trail = componentTrail(source);
+			if (trail) lines.push(pad + 'Component: ' + trail);
+			const eu = editorUrlFor(source.file, source.line, source.column);
+			if (eu) lines.push(pad + 'Open: ' + eu);
+		} else if (source?.status === 'svelte-production-build') {
+			lines.push(pad + 'Source: unavailable \u2014 Svelte production build (dev mode required for file mapping)');
+		}
+	}
+
 	function toMarkdown(items) {
 		if (!items.length) return '';
 		const lines = [];
@@ -880,15 +896,7 @@
 			lines.push('## ' + (i + 1) + '. [' + cat + '] ' + label);
 			if (a.text) lines.push('> ' + a.text);
 			if (a.comment) lines.push(a.comment);
-			if (a.source?.ref) {
-				lines.push('Source: ' + a.source.ref + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
-				const trail = componentTrail(a.source);
-				if (trail) lines.push('Component: ' + trail);
-				const eu = editorUrlFor(a.source.file, a.source.line, a.source.column);
-				if (eu) lines.push('Open: ' + eu);
-			} else if (a.source?.status === 'svelte-production-build') {
-				lines.push('Source: unavailable \u2014 Svelte production build (dev mode required for file mapping)');
-			}
+			pushSourceBlock(lines, a.source, '');
 			if (a.a11y) {
 				const bits = [];
 				if (a.a11y.role) bits.push('role=' + a.a11y.role);
@@ -914,11 +922,7 @@
 				if (frame) lines.push('  Frame: ' + frame);
 				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
-				if (d.source?.ref) {
-					lines.push('  Source: ' + d.source.ref);
-					const trail = componentTrail(d.source);
-					if (trail) lines.push('  Component: ' + trail);
-				}
+				pushSourceBlock(lines, d.source, '  ');
 				if (d.looks) lines.push('  Looks: ' + formatLooks(d.looks));
 			}
 			// Every selected element is actionable, so each one gets its own line with
@@ -938,13 +942,7 @@
 				if (w) lines.push('    Where: ' + w);
 				const frame = compactFramePath(t.framePath);
 				if (frame) lines.push('    Frame: ' + frame);
-					if (t.source?.ref) {
-						lines.push('    Source: ' + t.source.ref);
-						const trail = componentTrail(t.source);
-						if (trail) lines.push('    Component: ' + trail);
-						const eu = editorUrlFor(t.source.file, t.source.line, t.source.column);
-						if (eu) lines.push('    Open: ' + eu);
-					}
+					pushSourceBlock(lines, t.source, '    ');
 					if (t.looks) lines.push('    Looks: ' + formatLooks(t.looks));
 				}
 			}
@@ -1654,7 +1652,9 @@
 		// in shared wrappers), and we fall back to the class signature otherwise.
 		function directSvelteFile(el) {
 			const meta = readSvelteMeta(el);
-			return meta ? meta.loc.file : null;
+			// meta may be {file} without {loc}: frameFromSvelteNode accepts either
+			// shape, so resolve the file the same way here instead of assuming loc.
+			return meta ? (meta.loc?.file || meta.file || null) : null;
 		}
 
 		function selectSimilar() {
@@ -1906,7 +1906,7 @@
 		// Actions
 		// The non-primary members, frozen into the shape the export and storage use.
 		function memberRefs() {
-			const refs = members.slice(1).map(captureMemberRef).concat(missingMembers);
+			const refs = members.slice(1).map(captureElementSnapshot).concat(missingMembers);
 			return refs.length ? refs : null;
 		}
 
@@ -2041,8 +2041,10 @@
 		showPopover(targets[0], capturableEl(targets[0]).data, { members: [...targets] });
 	}
 
-	// A selected element, frozen into the shape exports and storage read.
-	function captureMemberRef(el) {
+	// An element frozen into the shape exports and storage read — assembled in
+	// one place so popover capture, member refs, and destinations cannot drift
+	// apart (two of the three copies were byte-identical; the third diverged).
+	function captureElementSnapshot(el) {
 		const styles = getComputedStyles(el);
 		return {
 			selector: describeElement(el),
@@ -2555,7 +2557,7 @@
 			color: '#2b6de8',
 			outline: 'dest',
 			rejectIf: (el, pm) => (el === pm.sourceEl ? 'That is the source element' : null),
-			convert: (el) => captureDestination(el),
+			convert: captureElementSnapshot,
 		},
 	};
 
@@ -2624,20 +2626,6 @@
 		const ownerDoc = el.ownerDocument || document;
 		if (el === ownerDoc.body || el === ownerDoc.documentElement) return null;
 		return el;
-	}
-
-	function captureDestination(el) {
-		const styles = getComputedStyles(el);
-		return {
-			selector: describeElement(el),
-			framePath: framePathFor(el),
-			tag: el.tagName.toLowerCase(),
-			text: getTextSnippet(el),
-			a11y: getA11y(el),
-			rect: getBoundingRect(el),
-			source: getSourceLoc(el),
-			looks: getLooks(styles),
-		};
 	}
 
 	// --- Events ---
@@ -2715,18 +2703,8 @@
 	}
 
 	function capturableEl(el) {
-		const styles = getComputedStyles(el);
-		const data = {
-			selector: describeElement(el),
-			framePath: framePathFor(el),
-			tag: el.tagName.toLowerCase(),
-			text: getTextSnippet(el),
-			styles,
-			looks: getLooks(styles),
-			rect: getBoundingRect(el),
-			source: getSourceLoc(el),
-			a11y: getA11y(el)
-		};
+		const data = captureElementSnapshot(el);
+		data.styles = getComputedStyles(el);
 		return { el, data };
 	}
 
