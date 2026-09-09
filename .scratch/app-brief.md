@@ -1,5 +1,7 @@
 # Rapid Feedback — App Summary & Rebuild Brief
 
+> Status 2026-09-10: the rebuilds this brief seeded (`luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` pending #11) were deleted as delivered experiments in 86ce2e2 (#6, #10) — deliverable paths below are historical.
+
 ## What the app is
 
 A Tampermonkey/Greasemonkey **userscript** (~2,100 lines of dependency-free vanilla JavaScript) that runs on every page (`@match *://*/*`). It lets a reviewer visually annotate any element on any web page and export that feedback as compact Markdown or structured JSON that a developer can act on. Think "leave Figma-style comments on a live web page, then copy the whole session into a ticket".
