@@ -68,11 +68,13 @@ module.exports = async function run6() {
 		check('fresh popover honors persisted offset', Math.abs(reopened.x - after.x) < 3 && Math.abs(reopened.y - after.y) < 3,
 			JSON.stringify(reopened));
 
-		// Esc resets the offset and closes the popover. Focus sits in the comment
-		// box, so the first Escape only blurs (preserving the draft) and the
-		// second one closes.
+		// Esc with a dirty draft preserves it: the first press only leaves the
+		// comment box, the second closes and resets the offset.
+		await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'keep this draft'; })()`);
 		await page.keyboard.press('Escape');
 		await new Promise(r => setTimeout(r, 100));
+		const kept = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelector('.rf-popover-ta').value : null; })()`);
+		check('Escape preserves a dirty draft', kept === 'keep this draft', JSON.stringify(kept));
 		await page.keyboard.press('Escape');
 		await new Promise(r => setTimeout(r, 100));
 		check('Esc clears the saved offset', await page.evaluate(() => !localStorage.getItem('rf_popover_offset_v1')));

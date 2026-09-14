@@ -34,7 +34,9 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | ✎ in the panel | Reopen the selection on the page it came from; edit the comment in place anywhere else |
 | Chord, double-tap | Open/close the panel |
 | `Pick destination`, then click | Record where the element should move to |
-| `Esc` | Cancel destination mode, then close the popover, then close the panel |
+| `Esc` | Leave the comment box first when the draft holds work (nothing lost); otherwise cancel destination mode, then close the popover, then close the panel |
+| `Alt+Shift+R` | Bring a dragged-offscreen popover back to its target without losing the draft |
+| ✎ with popover open | Same as `Alt+Shift+R` — return the popover to its target |
 | `⌘/Ctrl + Enter` | Submit from the comment box |
 
 The userscript intentionally does not pierce cross-origin iframe contents from the

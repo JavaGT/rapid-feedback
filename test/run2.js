@@ -38,6 +38,19 @@ module.exports = async function run() {
   check('single: Cancel reverts the preview', !live.includes('33px'), live);
   check('single: markers cleared on close', await page.evaluate(`${MARKERS}`) === 0);
 
+  // --- An offscreen dragged popover can always be recovered without losing draft text ---
+  await new Promise(r => setTimeout(r, 350));
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c1');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 150));
+  await page.evaluate(`(() => { const p = ${POP}; if (!p) throw new Error('popover did not open'); p.querySelector('.rf-popover-ta').value = 'keep this draft'; p.querySelector('.rf-popover-ta').dispatchEvent(new Event('input', {bubbles:true})); window.__rfPopoverHost = [...document.querySelectorAll('[data-rf-chrome]')].find(h => h.shadowRoot?.querySelector('.rf-popover')); if (!window.__rfPopoverHost) throw new Error('popover host not found'); window.__rfPopoverHost.style.transform = 'translate3d(-9999px, -9999px, 0)'; })()`);
+  await page.keyboard.down('Alt'); await page.keyboard.down('Shift'); await page.keyboard.press('r'); await page.keyboard.up('Shift'); await page.keyboard.up('Alt');
+  await new Promise(r => setTimeout(r, 100));
+  s = await page.evaluate(`(() => { const p = ${POP}; const h = window.__rfPopoverHost; return { transform: h.style.transform, comment: p.querySelector('.rf-popover-ta').value }; })()`);
+  check('offscreen popover: shortcut returns it onscreen', !/-9999/.test(s.transform) && s.comment === 'keep this draft', JSON.stringify(s));
+  await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.clear());
+
   // --- Destination pick round-trip preserves a group draft ---
   await page.evaluate(() => {
     document.getElementById('c4').__svelte_meta = {

@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.17
+// @version      5.18
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
 // @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
 // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
 // @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
@@ -76,6 +77,21 @@
 		return e.altKey && (chordUsesMeta ? e.metaKey : e.ctrlKey);
 	};
 	const IS_SAVE_KEY = (e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter';
+	// Escape must not destroy an in-progress draft while the user is typing.
+	// The popover/panel live in closed shadow roots, so at `document` capture
+	// level e.target is the retargeted host — inspect composedPath() instead.
+	function eventFromEditable(e) {
+		let path = null;
+		try { path = typeof e.composedPath === 'function' ? e.composedPath() : null; } catch { path = null; }
+		const nodes = Array.isArray(path) && path.length ? path : [e.target];
+		for (const n of nodes) {
+			if (!n || n.nodeType !== 1) continue;
+			const tag = n.tagName;
+			if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return n;
+			try { if (n.isContentEditable) return n; } catch {}
+		}
+		return null;
+	}
 
 	const CATEGORIES = [
 		{ id: 'general', label: 'General' },
@@ -135,6 +151,9 @@
 	let panelCountEl = null;
 	let fabEl = null;
 	let popoverEl = null;
+	// Reports whether the open popover's draft holds user work worth protecting
+	// from a reflex Escape. Assigned in showPopover, cleared in hidePopover.
+	let popoverDraftGuard = null;
 
 	let popoverRoot = null;
 
@@ -1228,7 +1247,8 @@
 		btn.textContent = '\u270f';
 		btn.addEventListener('click', (e) => {
 			e.stopPropagation();
-			if (panelEl && panelEl.style.display !== 'none') closePanel();
+			if (popoverEl) resetPopoverPosition();
+			else if (panelEl && panelEl.style.display !== 'none') closePanel();
 			else openPanel();
 		});
 		root.appendChild(btn);
@@ -1319,6 +1339,20 @@
 		applyPopoverPosition(host, pos.top, pos.left);
 	}
 
+	// A dragged position can outlive the layout and display it was created for.
+	// Resetting it keeps the draft intact and returns the popover to the live target.
+	function resetPopoverPosition() {
+		popoverOffset = null;
+		savePopoverOffset();
+		if (popoverEl) {
+			const el = anchor?.getTarget?.();
+			const rect = el?.isConnected ? getViewportRect(el) : { top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), right: Math.max(8, (innerWidth + POPOVER_W) / 2) };
+			placePopoverAt(popoverEl, rect, measurePopover());
+			anchor?.wake?.();
+		}
+		showToast('Popover returned to its target');
+	}
+
 	function placePopover(targetRect, popoverW, popoverH) {
 		const gap = 8, pad = 8;
 		const r = targetRect;
@@ -1400,6 +1434,11 @@
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
 	function showPopover(el, data, initial) {
 		hidePopover();
+		// Pin the record being edited by identity so a panel delete that shifts
+		// array indices mid-edit cannot redirect Submit onto another annotation.
+		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
+			try { initial.editRef = annotations[initial.editIndex]; } catch {}
+		}
 		const { host, root } = createShadowRoot();
 		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
 		// static position sits at the end of document flow. Without an explicit
@@ -1418,7 +1457,7 @@
 		// beginPopoverDrag distinguishes drags from clicks on it.
 		const dragHandle = document.createElement('div');
 		dragHandle.className = 'rf-drag-handle';
-		dragHandle.title = 'Drag to move';
+		dragHandle.title = 'Drag to move. Alt+Shift+R resets the position.';
 		dragHandle.addEventListener('pointerdown', (e) => {
 			e.stopPropagation();
 			host.style.userSelect = 'none';
@@ -1771,6 +1810,15 @@
 
 		// Pick destination
 		let destData = initial?.destination || null;
+		// A reflex Escape must not nuke real work, but a pristine draft closes
+		// normally — established single-Esc-dismiss flows (and suites) rely on
+		// it. Dirty = typed comment, style tweaks, destination, or category.
+		const openComment = initial?.comment || '';
+		const openCategory = initial?.category || activeCategory;
+		popoverDraftGuard = () => ta.value !== openComment
+			|| Object.keys(adjustedStyles).length > 0
+			|| !!destData
+			|| selCat !== openCategory;
 
 		const destRow = document.createElement('div');
 		destRow.className = 'rf-dest-row';
@@ -1803,6 +1851,7 @@
 				members: [...members],
 				missingMembers: [...missingMembers],
 				editIndex: initial?.editIndex,
+				editRef: initial?.editRef || null,
 			};
 		}
 
@@ -1953,7 +2002,14 @@
 			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
 			const annotationData = buildAnnotationData(comment);
 			persist(() => {
-				if (Number.isInteger(initial?.editIndex) && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
+				// Replace by identity, not raw index: the panel can delete other
+				// rows while this popover is open, shifting indices. If the
+				// original record is gone, append instead of overwriting a
+				// stranger that slid into its slot.
+				const ref = initial?.editRef;
+				const at = ref ? annotations.indexOf(ref) : -1;
+				if (at >= 0) annotations[at] = makeAnnotation(annotationData);
+				else if (Number.isInteger(initial?.editIndex) && !ref && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
 				else annotations.push(makeAnnotation(annotationData));
 			});
 			keepStyles();
@@ -2131,6 +2187,7 @@
 		// (see cancelPopover).
 		revertStyles();
 		popoverApi = null;
+		popoverDraftGuard = null;
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		styleTargets = [];
 		styleSnapshot = null;
@@ -2984,7 +3041,27 @@
 	const DOUBLE_TAP_MS = 300;
 
 	addFeedbackListener('keydown', (e) => {
+		if (e.altKey && e.shiftKey && String(e.key).toLowerCase() === 'r') {
+			if (popoverEl) { killEvent(e); resetPopoverPosition(); }
+			return;
+		}
 		if (e.key === 'Escape') {
+			// Escape from inside a comment box: when the draft holds real work
+			// (typed comment, tweaks, destination, category), blur out instead
+			// of nuking it — a second Escape then closes normally. A pristine
+			// draft, or focus outside any input, closes immediately.
+			// The inner textarea stopPropagation guards cannot do this alone
+			// because this document-capture listener runs first.
+			const editable = eventFromEditable(e);
+			if (editable) {
+				let dirty = false;
+				try { dirty = !!(popoverEl && popoverDraftGuard && popoverDraftGuard()); } catch { dirty = false; }
+				if (!dirty && !popoverEl && panelEl && panelEl.style.display !== 'none') {
+					const v = editable.value !== undefined ? editable.value : editable.textContent;
+					dirty = !!String(v || '').trim();
+				}
+				if (dirty) { try { editable.blur(); } catch {} return; }
+			}
 			if (pickMode) { killEvent(e); exitPick(null); return; }
 			if (popoverEl) { cancelPopover(); return; }
 			if (panelEl && panelEl.style.display !== 'none') { closePanel(); return; }

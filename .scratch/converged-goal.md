@@ -26,3 +26,13 @@ Both reviews independently flagged **silent loss/corruption of in-progress work*
 - Rest of suite unchanged by this fix: run2/run3/run5/run7/run8 PASS; run.js has 1
   pre-existing Svelte-disclosure FAIL and run4 a harness-level undo-button error —
   both in code paths this diff does not touch (verified via `git diff` grep).
+
+## 2026-09-14 refinement: dirty-aware Escape (first fix broke run4 + run.js)
+
+The blanket blur-on-Escape regressed two suites that use Escape-as-teardown with
+focus in the comment box (verified: both PASS at HEAD, FAIL with blanket blur).
+Escape now consults `popoverDraftGuard` (dirty = typed comment, style tweaks,
+destination, category): dirty → blur and keep; pristine → close immediately.
+Panel quick-note with text is likewise protected; empty box closes. run6 now
+carries a real preservation check (closes #32); README documents `Alt+Shift+R`
+and the dirty-aware Esc (closes #38). Full suite: 107/107 green.
