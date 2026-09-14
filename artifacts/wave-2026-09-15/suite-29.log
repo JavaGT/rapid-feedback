@@ -1,0 +1,144 @@
+
+> test
+> node run-all.js
+
+PASS  markers appear while accumulating
+PASS  popover lists all 3 members
+PASS  primary marked first
+PASS  count reads 3 elements
+PASS  title shows +2
+PASS  zoom row hidden for group
+PASS  markers persist while popover open (2 non-primary)
+PASS  style preview hits all 3 selected
+PASS  style preview skips unselected
+PASS  removed member reverts its preview
+PASS  remaining members keep preview
+PASS  list shrinks to 2 after remove
+PASS  marker removed too
+PASS  promote reorders the list
+PASS  add-element banner shown
+PASS  added element joins the list
+PASS  pending tweak carries onto the new member
+PASS  annotation saved
+PASS  saved annotation keeps 2 other members
+PASS  member refs carry selector + text
+
+--- API keys: ["markdown","json","annotations","clear","openPanel","setProjectRoot"] ---
+--- MARKDOWN ---
+# Feedback — RF Harness
+Page: file:///Users/server/Development/rapid-feedback/test/page.html
+Env: 1200×800 · Chrome 153 on macOS
+
+## 1. [GENERAL] Second card
+> Second card
+Align these cards
+
+padding: 40px;
+Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Where: div#c2.card
+Rect: 242×162
+Group: 3 elements (this + 2)
+  • div#c1 "First card"
+    Where: div#c1.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+  • div#c4 "Fourth card"
+    Where: div#c4.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Tweak (all 3 elements):
+  padding: 40px;
+----------------
+PASS  selector skips variant/arbitrary classes
+PASS  svelte source maps file:line + route-aware stack
+PASS  nested Svelte component trail keeps leaf-to-root order
+PASS  editor deep link carries root, line and column
+PASS  exports include computed visual context
+PASS  select similar groups by component file
+PASS  group members retain their component trail
+PASS  shadow-root targets inherit host component context
+PASS  accessibility context includes descriptions and states
+PASS  hostile __svelte_meta getter fails soft
+PASS  prod-build disclosure when dev meta absent
+
+31/31 checks passed
+PASS  single: zoom row visible
+PASS  single: no member rows
+PASS  single: count reads 1 element
+PASS  single: title has no +N
+PASS  zoom up retargets to parent (.row)
+PASS  single: style previews live
+PASS  single: Cancel reverts the preview
+PASS  single: markers cleared on close
+PASS  offscreen popover: shortcut returns it onscreen
+PASS  destination banner shown
+PASS  destination round-trip keeps the 2-member selection
+PASS  destination round-trip keeps the comment
+PASS  destination recorded
+PASS  Escape from add-mode restores the draft unchanged
+PASS  markdown lists the group
+PASS  markdown gives each member a Where line
+PASS  markdown has no duplicated text
+PASS  json carries groupSize
+PASS  json members carry where + rect
+PASS  destination retains source and component context
+
+--- MARKDOWN ---
+# Feedback — RF Harness
+Page: file:///Users/server/Development/rapid-feedback/test/page.html
+Env: 1200×800 · Chrome 153 on macOS
+
+## 1. [GENERAL] First card
+> First card
+move these
+Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=8px; border=1px solid rgb(153, 153, 153)
+Where: div#c1.card
+Rect: 178×98
+→ Destination: div#c4.card
+  Text: “Fourth card”
+  Source: src/lib/DetailsPanel.svelte:24
+  Component: projects/+page.svelte:15
+  Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=8px; border=1px solid rgb(153, 153, 153)
+Group: 2 elements (this + 1)
+  • div#c2 "Second card"
+    Where: div#c2.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=8px; border=1px solid rgb(153, 153, 153)
+----------------
+
+20/20 checks passed
+PASS  saved annotation reopens in the full popover
+PASS  editing replaces rather than appends annotation
+PASS  reopened selection discloses missing stored members
+PASS  select similar adds direct sibling cards
+PASS  primary role is explained
+PASS  similar selection undoes in one action
+PASS  duplicate labels include positional hints
+PASS  SPA navigation closes an in-flight popover
+
+8/8 checks passed
+PASS  select similar survives an SVG primary
+PASS  undo re-seats the primary onto a still-selected element
+
+2/2 checks passed
+PASS  a concealed FAB does not swallow ordinary clicks
+PASS  a concealed FAB does not open the panel
+PASS  chord-click passes through the FAB to the element beneath
+PASS  the FAB did not open the panel instead
+PASS  chrome becomes interactive again after chord release
+PASS  popover is interactive while no chord is held
+PASS  chord-click with popover open adds to the selection
+PASS  growing the selection keeps the draft comment
+PASS  chord-click on the panel never targets tool chrome
+PASS  no annotation was created from tool chrome
+FAIL  annotation from another page loads
+      0
+HARNESS ERROR Error [TypeError]: Cannot read properties of null (reading 'click')
+    at evaluate (evaluate at /Users/server/Development/rapid-feedback/test/run5.js:104:14, <anonymous>:0:182)
+    at evaluate (evaluate at /Users/server/Development/rapid-feedback/test/run5.js:104:14, <anonymous>:0:194)
+    at #evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ExecutionContext.js:350:60)
+    at async ExecutionContext.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ExecutionContext.js:277:16)
+    at async IsolatedWorld.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/IsolatedWorld.js:105:16)
+    at async CdpFrame.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/api/Frame.js:362:20)
+    at async CdpPage.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/api/Page.js:830:20)
+    at async /Users/server/Development/rapid-feedback/test/run5.js:104:3
+    at async withPage (/Users/server/Development/rapid-feedback/test/common.js:48:10)
+    at async /Users/server/Development/rapid-feedback/test/run-all.js:5:34
+suite rc=2
