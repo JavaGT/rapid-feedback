@@ -1055,23 +1055,13 @@
 
 	function load() {
 		try {
-			let data = localStorage.getItem(STORAGE_KEY);
-			if (!data) {
-				data = localStorage.getItem('rapid_feedback_annotations');
-				if (data) localStorage.setItem(STORAGE_KEY, data);
-			}
+			const data = localStorage.getItem(STORAGE_KEY);
 			if (!data) return;
 			const parsed = JSON.parse(data);
 			// One corrupt row shouldn't take the whole history down with it: keep the
 			// well-formed objects and let makeAnnotation fill in any missing fields.
-			let rows;
-			if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)
-			else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.annotations)) rows = parsed.annotations;
-			if (Array.isArray(rows)) {
-				annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
-				// Re-emit in the current envelope so the old shape doesn't linger.
-				save();
-			}
+			const rows = parsed && typeof parsed === 'object' ? parsed.annotations : null;
+			if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
 		} catch {}
 	}
 
