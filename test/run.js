@@ -1,4 +1,4 @@
-const { POP, MARKERS, createReporter, withPage } = require('./common');
+const { POP, MARKERS, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
 
 module.exports = async function run() {
 	const { check, finish } = createReporter();
@@ -14,7 +14,7 @@ module.exports = async function run() {
   check('markers appear while accumulating', markersDuring === 3, 'got ' + markersDuring);
   await page.keyboard.up('Meta');
   await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopover(page);
 
   let state = await page.evaluate(`(() => {
     const p = ${POP}; if (!p) return { err: 'no popover' };
@@ -99,7 +99,7 @@ module.exports = async function run() {
     ta.value = 'Align these cards';
     p.querySelector('.rf-btn-primary').click();
   })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
 
   const out = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
@@ -124,14 +124,14 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c5');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => {
     const p = ${POP};
     const ta = p.querySelector('.rf-popover-ta');
     ta.value = 'utility check';
     p.querySelector('.rf-btn-primary').click();
   })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const utilSel = await page.evaluate(() => {
     const a = window.__SCOPE_FEEDBACK_API__.annotations;
     return a[a.length - 1].selector;
@@ -156,12 +156,12 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c1');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => { const p = ${POP};
     p.querySelector('.rf-popover-ta').value = 'svelte check';
     p.querySelector('.rf-btn-primary').click();
   })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const sv = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     const a = api.annotations[api.annotations.length - 1];
@@ -191,7 +191,7 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c1');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => { const p = ${POP};
     [...p.querySelectorAll('.rf-btn-sm')].find(b => /similar/i.test(b.textContent)).click();
   })()`);
@@ -199,7 +199,7 @@ module.exports = async function run() {
   const simRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
   check('select similar groups by component file', simRows === 2, 'rows=' + simRows + ' (signature fallback would sweep all cards)');
   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'nested group check'; p.querySelector('.rf-btn-primary').click(); })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const groupContext = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     const a = api.annotations[api.annotations.length - 1];
@@ -233,9 +233,9 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await page.mouse.click(shadowPoint.x, shadowPoint.y);
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'shadow context check'; p.querySelector('.rf-btn-primary').click(); })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const shadowSource = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     return api.annotations[api.annotations.length - 1].source;
@@ -256,9 +256,9 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c4');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'accessibility context check'; p.querySelector('.rf-btn-primary').click(); })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const a11yContext = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.at(-1).a11y);
   check('accessibility context includes descriptions and states',
     a11yContext?.description === 'Opens the project details' && a11yContext.states?.expanded === 'true',
@@ -289,12 +289,12 @@ module.exports = async function run() {
   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
   await chordClick('#c4');
   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
-  await new Promise(r => setTimeout(r, 250));
+  await waitForPopover(page);
   await page.evaluate(`(() => { const p = ${POP};
     p.querySelector('.rf-popover-ta').value = 'disclosure check';
     p.querySelector('.rf-btn-primary').click();
   })()`);
-  await new Promise(r => setTimeout(r, 200));
+  await waitForPopoverGone(page);
   const disc = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     const a = api.annotations[api.annotations.length - 1];

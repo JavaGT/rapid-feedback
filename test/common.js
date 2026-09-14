@@ -51,4 +51,21 @@ async function withPage(run) {
 	}
 }
 
-module.exports = { POP, MARKERS, createReporter, withPage };
+// Bounded polling replaces guessed sleeps: evaluate `pageExpr` in the page
+// until truthy. A timeout throws with the description and last value so a
+// stall diagnoses itself instead of silently passing after a fixed nap.
+const delay = (ms) => new Promise(r => setTimeout(r, ms));
+async function waitFor(page, pageExpr, { timeoutMs = 2000, intervalMs = 25, description } = {}) {
+	const deadline = Date.now() + timeoutMs;
+	let last;
+	while (Date.now() < deadline) {
+		last = await page.evaluate(`(() => ${pageExpr})()`);
+		if (last) return last;
+		await delay(intervalMs);
+	}
+	throw new Error('waitFor timeout after ' + timeoutMs + 'ms: ' + (description || pageExpr.slice(0, 80)) + ' (last=' + JSON.stringify(last) + ')');
+}
+const waitForPopover = (page, opts) => waitFor(page, `!!(${POP})`, { description: 'popover open', ...opts });
+const waitForPopoverGone = (page, opts) => waitFor(page, `!(${POP})`, { description: 'popover closed', ...opts });
+
+module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
