@@ -1,0 +1,665 @@
+[0m
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cat test/package.json
+{
+  "private": true,
+  "scripts": { "test": "node run-all.js" },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls artifacts/wave-2026-09-16-0700/ 2>&1; echo "---"; cat artifacts/wave-2026-09-16-0700/suite-root-invocation.log 2>&1 | head -60
+review-6077199-dispatch.log
+suite-root-invocation.log
+---
+
+> test
+> node run-all.js
+
+PASS  markers appear while accumulating
+PASS  popover lists all 3 members
+PASS  primary marked first
+PASS  count reads 3 elements
+PASS  title shows +2
+PASS  zoom row hidden for group
+PASS  markers persist while popover open (2 non-primary)
+PASS  style preview hits all 3 selected
+PASS  style preview skips unselected
+PASS  removed member reverts its preview
+PASS  remaining members keep preview
+PASS  list shrinks to 2 after remove
+PASS  marker removed too
+PASS  promote reorders the list
+PASS  add-element banner shown
+PASS  added element joins the list
+PASS  pending tweak carries onto the new member
+PASS  annotation saved
+PASS  saved annotation keeps 2 other members
+PASS  member refs carry selector + text
+
+--- API keys: ["markdown","json","annotations","clear","openPanel","setProjectRoot"] ---
+--- MARKDOWN ---
+# Feedback — RF Harness
+Page: file:///Users/server/Development/rapid-feedback/test/page.html
+Env: 1200×800 · Chrome 153 on macOS
+
+## 1. [GENERAL] Second card
+> Second card
+Align these cards
+
+padding: 40px;
+Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Where: div#c2.card
+Rect: 242×162
+Group: 3 elements (this + 2)
+  • div#c1 "First card"
+    Where: div#c1.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+  • div#c4 "Fourth card"
+    Where: div#c4.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Tweak (all 3 elements):
+  padding: 40px;
+----------------
+PASS  selector skips variant/arbitrary classes
+PASS  svelte source maps file:line + route-aware stack
+PASS  nested Svelte component trail keeps leaf-to-root order
+PASS  editor deep link carries root, line and column
+PASS  exports include computed visual context
+PASS  select similar groups by component file
+PASS  group members retain their component trail
+PASS  shadow-root targets inherit host component context
+PASS  accessibility context includes descriptions and states
+PASS  hostile __svelte_meta getter fails soft
+PASS  prod-build disclosure when dev meta absent
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline -3 && git show --stat 6077199 | head -40
+6077199 AGENTS.md: run the suite from repo root via npm --prefix; bare cd test named as the hazard (#45)
+2b796fd Wave 2026-09-16 artifacts: hostile reviews (a0f4d02 BLOCK remedied by 0be14c2; 7eed262/922d147/0be14c2 APPROVED), suite logs, receipt (#29/#13/#40/#11 closed, #41-#43 filed)
+fbaae75 AGENTS.md: drop stale oxalpha-redesign clause after #11 deletion
+commit 607719992d817937de31f7e9ae16d4a2a13d5195
+Author: JavaGT <java@javagrant.com>
+Date:   Wed Sep 16 11:29:41 2026 +1200
+
+    AGENTS.md: run the suite from repo root via npm --prefix; bare cd test named as the hazard (#45)
+
+ AGENTS.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh -R JavaGT/rapid-feedback issue view 44 2>&1 | head -120
+title:	[wave 2026-09-16] Evaluate: prune userscript @note changelog block (lines 6-31, 19 entries) — duplicates git history
+state:	OPEN
+author:	JavaGT (JavaGT)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	44
+--
+Source: forced-subtraction pass, wave 2026-09-16 (0700). Evaluate whether this is worth doing — implementation is explicitly NOT the todo.
+
+**Finding.** `rapid-feedback.user.js:6-31` carries 19 `// @note` changelog entries (v5.0 through v5.18), ~26 header lines that duplicate what git history already records. The block only ever grows; v5.18 added another line (270fca0). No consumer: nothing in `test/` or tooling parses `@note` (grepped); Tampermonkey only acts on the structured fields (@version/@name).
+
+**GOES.** All but the newest ~3 notes (v5.18/v5.17/v5.16) — per-user decision on N.
+**STAYS.** @version, @name, @description, and the newest note(s): they are what a Tampermonkey update prompt / script editor shows.
+**BREAKS (cross-examined).** Nothing at runtime — @note is free-form metadata, no reader in repo or harness. Only soft break: archaeology convenience for users reading the installed script's header; git log fully covers it.
+
+**Decision question for owner:** keep last N notes in the header (N=2-3 suggested) and let git history hold the rest, or keep growing the block? If agreed, the todo becomes implement.
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 6077199 -- AGENTS.md
+commit 607719992d817937de31f7e9ae16d4a2a13d5195
+Author: JavaGT <java@javagrant.com>
+Date:   Wed Sep 16 11:29:41 2026 +1200
+
+    AGENTS.md: run the suite from repo root via npm --prefix; bare cd test named as the hazard (#45)
+
+diff --git a/AGENTS.md b/AGENTS.md
+index e04c218..182b3f1 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -5,7 +5,7 @@ Settled facts for agents working in this repo. Feature/install docs live in [REA
+ ## What is what
+ 
+ - `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. The `oxalpha-redesign/`, `luna-redesign/`, and `deepseek-redesign/` one-shot experiments were deleted (#11, #39); their comparisons remain in `.scratch/comparison-oxalpha.md`, `.scratch/comparison.md`, and `.scratch/comparison-deepseek.md`.
+-- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run with `cd test && npm install && npm test`; override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
++- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run from the repo root with `npm --prefix test install && npm --prefix test test` (or a `(cd test && npm test)` subshell) — a bare `cd test` persists into later shell calls and breaks the next repo-root git command (#45); override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
+ - `.scratch/` is per-agent working space (notes, plans, repro pages). Untracked files anywhere — including `test/repro-h1.js` — may be another agent's in-flight work: read-only until claimed.
+ 
+ ## Worktree discipline
+[0m$ [0mcd /Users/server/Development/rapid-feedback && wc -l artifacts/wave-2026-09-16-0700/suite-root-invocation.log && rg -n "PASS|FAIL|suite|Suite|SUITE|done|Error|error" artifacts/wave-2026-09-16-0700/suite-root-invocation.log | tail -40
+176 artifacts/wave-2026-09-16-0700/suite-root-invocation.log
+128:PASS  growing the selection keeps the draft comment
+129:PASS  chord-click on the panel never targets tool chrome
+130:PASS  no annotation was created from tool chrome
+131:PASS  annotation from another page loads
+132:PASS  editing an off-page annotation edits the comment in place, not the popover
+133:PASS  the off-page comment edit persists
+136:PASS  popover opens for drag test
+137:PASS  drag handle exists
+138:PASS  drag moves the popover
+139:PASS  drag persists offset
+140:PASS  fresh popover honors persisted offset
+141:PASS  Escape preserves a dirty draft
+142:PASS  Esc clears the saved offset
+143:PASS  tweak applied on submit
+144:PASS  restore point persisted
+145:PASS  revert button shown on card
+146:PASS  tweak reverted to original
+147:PASS  quick note saved
+148:PASS  first Clear click does not wipe
+149:PASS  armed Clear label appears
+150:PASS  second Clear click wipes
+151:PASS  ambiguity warning in markdown
+152:PASS  replaceState with same URL keeps the draft open
+153:PASS  chord-click on tool chrome does not annotate <html>
+154:PASS  wiping every selected element dims the popover to the lost state
+155:PASS  chord-add revives a lost draft with Submit available
+156:PASS  first click after an empty chord reaches the FAB
+157:PASS  holding the chord past the gesture window keeps the selection
+158:PASS  popover renders inside the viewport on a tall page
+161:PASS  same-origin iframe opens the child popover
+162:PASS  iframe pick targets the inner element
+163:PASS  iframe pick captures child text
+164:PASS  iframe path is persisted for reopening
+165:PASS  iframe style preview is applied
+166:PASS  iframe style restore resolves through the frame path
+167:PASS  markdown identifies the containing iframe
+168:PASS  iframe popover is positioned in the top viewport
+171:PASS  Submit stays available after target removal
+172:PASS  removed target draft can be submitted
+176:8/8 suites passed
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1,40p' rapid-feedback.user.js
+// ==UserScript==
+// @name         Rapid Feedback
+// @namespace    javagrant.ac.nz
+// @version      5.18
+// @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+// @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
+// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
+// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
+// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
+// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
+// @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
+// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+// @note         v5.3.1: component chain shows file names instead of full paths
+// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
+// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+// @author       JavaGT
+// @match        *://*/*
+// @grant        none
+// @homepageURL  https://github.com/JavaGT/rapid-feedback
+// @supportURL   https://github.com/JavaGT/rapid-feedback/issues
+// @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+// ==/UserScript==
+
+(function () {
+	'use strict';
+	const IS_TOP_FRAME = window.parent === window;
+	// A top-level instance can bridge same-origin frames that do not run the
+	// userscript themselves. Instances that do run in a frame mark it so the top
+	// instance does not install a second set of handlers there.
+	if (!IS_TOP_FRAME) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n "cd test|--prefix|npm test|npm --prefix|run-all" AGENTS.md README.md .scratch/*.md 2>&1 | head -40
+.scratch/hostile-omen.md:3:Reviewed: `rapid-feedback.user.js` (3091 lines, worktree state = commit 6a6ada0 + uncommitted v5.18 changes), `README.md`, `test/` (run-all.js, common.js, run1–8, page.html, page2.html, repro-h1.js). No code edited.
+.scratch/hostile-omen.md:90:11. **`test/repro-h1.js` is an ad-hoc probe not wired into `run-all.js`** — dormant harness code; per repo hygiene it should be deleted or promoted into a suite.
+README.md:86:cd test
+README.md:88:npm test
+.scratch/pain-journal-2026-09-10.md:19:Events: v5.1 reposition, v5.3 anchoring, v5.9 concealed-FAB-clicks (2109098), v5.14 draggable, v5.15 never-appearing+unclickable (83cfbfd, 120-line change + 110-line run6.js), untracked probe test/repro-h1.js ("popover off-screen on tall page", never wired into run-all), uncommitted v5.18 resetPopoverPosition + Alt+Shift+R recovery. Root cause: no single owner of "visible / placed / clickable" — mechanisms smeared across rapid-feedback.user.js:1221-1223 (hidden FAB), :1261-1276 (grace+hover), :1284-1289 (click-through), :1306-1308 (480px height guess), :1355-1403 (anchor loop). Decision question: consolidate or keep patching; also promote-or-delete repro-h1.js.
+AGENTS.md:8:- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run from the repo root with `npm --prefix test install && npm --prefix test test` (or a `(cd test && npm test)` subshell) — a bare `cd test` persists into later shell calls and breaks the next repo-root git command (#45); override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
+.scratch/abstraction-zoom-2026-09-10.md:93:`node test/run-all.js` on the scratch clone (HEAD base is green, see above). Core:
+.scratch/quick-scan-2026-09-10.md:13:`node test/run-all.js` is RED: run–run3 pass, HARNESS ERROR at `test/run4.js:54` (`TypeError: Cannot read properties of undefined (reading 'click')`), run5–run8 never execute.
+.scratch/quick-scan-2026-09-10.md:25:- `test/run-all.js:5` has no per-suite try/catch; the IIFE catch at :8 exits 2, so suites after a crash are skipped unreported.
+.scratch/quick-scan-2026-09-10.md:62:- `node test/run-all.js` → run–run3 PASS, HARNESS ERROR run4.js:54, run5–run8 never ran (baseline RED confirmed).
+.scratch/forced-subtraction-2026-09-10.md:14:Baseline test status, measured this session (`node test/run-all.js`):
+.scratch/forced-subtraction-2026-09-10.md:89:### Area 7 — Test harness + suites (`test/common.js`, run–run8, `page.html`, `page2.html`, `run-all.js`)
+.scratch/forced-subtraction-2026-09-10.md:126:| GOES | None. The gist note (README.md:77) is itself the migration pointer for pre-v5.7 installs — deleting it breaks that path; the gist stays. Test instructions match reality (`cd test && npm install && npm test` → run-all.js). |
+.scratch/forced-subtraction-2026-09-10.md:180:- `node test/run-all.js` (twice): baseline RED as tabled above.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n --hidden "@note" --glob '!rapid-feedback.user.js' . 2>&1 | head -40; echo "===count in user.js==="; rg -c "@note" rapid-feedback.user.js
+./.scratch/comparison-deepseek.md:73:3. **The lifecycle bugs are the same class the original's `@note` history shows it fixing over nine versions** (stuck states, chrome swallowing clicks). Independent rebuilds re-committing them confirms those notes encode earned knowledge, not paranoia — keep regression-testing gesture release paths specifically.
+./.scratch/comparison.md:19:| Docs | README + per-version `@note` changelog | DESIGN.md (35 lines) |
+./artifacts/wave-2026-09-16-0700/review-6077199-dispatch.log:86:title:	[wave 2026-09-16] Evaluate: prune userscript @note changelog block (lines 6-31, 19 entries) — duplicates git history
+./artifacts/wave-2026-09-16-0700/review-6077199-dispatch.log:104:**Finding.** `rapid-feedback.user.js:6-31` carries 19 `// @note` changelog entries (v5.0 through v5.18), ~26 header lines that duplicate what git history already records. The block only ever grows; v5.18 added another line (270fca0). No consumer: nothing in `test/` or tooling parses `@note` (grepped); Tampermonkey only acts on the structured fields (@version/@name).
+./artifacts/wave-2026-09-16-0700/review-6077199-dispatch.log:108:**BREAKS (cross-examined).** Nothing at runtime — @note is free-form metadata, no reader in repo or harness. Only soft break: archaeology convenience for users reading the installed script's header; git log fully covers it.
+./artifacts/wave-2026-09-16/review-40-11.stdout.log:270:// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+./artifacts/wave-2026-09-16/review-landed.stdout.log:547:// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+./artifacts/wave-2026-09-16/review-landed.stdout.log:548:// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+./artifacts/wave-2026-09-16/review-landed.stdout.log:549:// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+./artifacts/wave-2026-09-16/review-landed.stdout.log:550:// @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+./artifacts/wave-2026-09-16/review-landed.stdout.log:551:// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+./artifacts/wave-2026-09-16/review-landed.stdout.log:552:// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
+./artifacts/wave-2026-09-16/review-landed.stdout.log:553:// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
+./artifacts/wave-2026-09-16/review-landed.stdout.log:554:// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
+./artifacts/wave-2026-09-16/review-landed.stdout.log:555:// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
+./artifacts/wave-2026-09-16/review-landed.stdout.log:556:// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
+./artifacts/wave-2026-09-16/review-landed.stdout.log:557:// @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
+./artifacts/wave-2026-09-16/review-landed.stdout.log:558:// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+./artifacts/wave-2026-09-16/review-landed.stdout.log:559:// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+./artifacts/wave-2026-09-16/review-landed.stdout.log:560:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+./artifacts/wave-2026-09-16/review-landed.stdout.log:561:// @note         v5.3.1: component chain shows file names instead of full paths
+./artifacts/wave-2026-09-16/review-landed.stdout.log:562:// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
+./artifacts/wave-2026-09-16/review-landed.stdout.log:563:// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+./artifacts/wave-2026-09-16/review-landed.stdout.log:564:// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+./artifacts/wave-2026-09-16/review-landed.stdout.log:572:// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1140:18:// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1141:19:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1142:22:// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1143:23:// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1396:10:// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1397:19:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+./artifacts/wave-2026-09-16/review-landed.stdout.log:1708:- v5.5 (@note, userscript header line 19): "SPA draft-close handling"
+===count in user.js===
+19
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '78,95p' README.md
+This repository is the single source of truth. The script was previously distributed from [a gist](https://gist.github.com/JavaGT/6ca097d0ded9b16e69549e0648a50f96), which is frozen at the v5.7 cutover build and only exists so installs predating the move can still find their way here.
+
+## Tests
+
+The dev-only Puppeteer harness runs the userscript against `test/page.html` in headless Chrome:
+
+```sh
+cd test
+npm install
+npm test
+```
+
+It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cat test/run-all.js
+const suites = [require('./run'), require('./run2'), require('./run3'), require('./run4'), require('./run5'), require('./run6'), require('./run7'), require('./run8')];
+
+(async () => {
+	let passed = 0;
+	for (const suite of suites) if (await suite()) passed++;
+	console.log('\n' + passed + '/' + suites.length + ' suites passed');
+	process.exit(passed === suites.length ? 0 : 1);
+})().catch(e => { console.error('HARNESS ERROR', e); process.exit(2); });
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n --hidden "GM_info|\.version|@version|readFile|header|// @|note" test/*.js | head -30; echo "=== user.js self-header reads ==="; rg -n "GM_info|@version|==UserScript==|@note" rapid-feedback.user.js | head -20
+test/run4.js:7:const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+test/run6.js:24:		// --- Draggable popover: header strip moves it and persists the offset ---
+test/run6.js:119:				if (ta) ta.value = 'quick note';
+test/run6.js:130:		check('quick note saved', count === 1, String(count));
+test/common.js:5:const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+test/repro-h1.js:5:const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+test/run5.js:99:		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
+=== user.js self-header reads ===
+1:// ==UserScript==
+4:// @version      5.18
+6:// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+7:// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+8:// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+9:// @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+10:// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+11:// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
+12:// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
+13:// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
+14:// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
+15:// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
+16:// @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
+17:// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+18:// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+19:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+20:// @note         v5.3.1: component chain shows file names instead of full paths
+21:// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
+22:// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+23:// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git status --short | head -30; echo "=== node_modules ==="; ls -d test/node_modules 2>&1
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+?? .scratch/quick-scan-2026-09-10.md
+?? artifacts/automation-receipts/2026-09-16/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md
+?? artifacts/wave-2026-09-16-0700/
+?? test/repro-h1.js
+=== node_modules ===
+test/node_modules
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 270fca0 --stat | head -20; echo "=== v5.18 note change ==="; git show 270fca0 -- rapid-feedback.user.js | rg -n "@note|^\+|^-" | head -20
+commit 270fca0c26da18875fa40986afb06bdf4b207be6
+Author: JavaGT <java@javagrant.com>
+Date:   Mon Sep 14 14:43:58 2026 +1200
+
+    Land v5.18 lane + draft safety: offscreen recovery, dirty-aware Escape, edit-by-identity (#32, #38)
+    
+    - v5.18: Alt+Shift+R / FAB-click returns an offscreen popover without losing
+      the draft (test/run2.js covers it); README interactions table updated.
+    - Draft safety: Escape from a dirty draft only blurs (typed comment, tweaks,
+      destination, category); pristine drafts close immediately, so existing
+      single-Esc flows are unaffected. Submit replaces by identity, not index.
+    - run6 proves preservation with a real typed-draft check, not double-Escape.
+    - Full Puppeteer suite green: 107/107.
+
+ .scratch/converged-goal.md | 10 ++++++
+ README.md                  |  4 ++-
+ rapid-feedback.user.js     | 85 +++++++++++++++++++++++++++++++++++++++++++---
+ test/run2.js               | 13 +++++++
+ test/run6.js               |  8 +++--
+ 5 files changed, 112 insertions(+), 8 deletions(-)
+=== v5.18 note change ===
+17:--- a/rapid-feedback.user.js
+18:+++ b/rapid-feedback.user.js
+23:-// @version      5.17
+24:+// @version      5.18
+26: // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+27:+// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+28: // @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+29: // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+30: // @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+35:+	// Escape must not destroy an in-progress draft while the user is typing.
+36:+	// The popover/panel live in closed shadow roots, so at `document` capture
+37:+	// level e.target is the retargeted host — inspect composedPath() instead.
+38:+	function eventFromEditable(e) {
+39:+		let path = null;
+40:+		try { path = typeof e.composedPath === 'function' ? e.composedPath() : null; } catch { path = null; }
+41:+		const nodes = Array.isArray(path) && path.length ? path : [e.target];
+42:+		for (const n of nodes) {
+43:+			if (!n || n.nodeType !== 1) continue;
+44:+			const tag = n.tagName;
+45:+			if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return n;
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /private/tmp && pwd
+/private/tmp
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mpwd
+/Users/server/Development/rapid-feedback
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1,60p' artifacts/wave-2026-09-16-0700/review-6077199-dispatch.log
+[0m
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cat test/package.json
+{
+  "private": true,
+  "scripts": { "test": "node run-all.js" },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls artifacts/wave-2026-09-16-0700/ 2>&1; echo "---"; cat artifacts/wave-2026-09-16-0700/suite-root-invocation.log 2>&1 | head -60
+review-6077199-dispatch.log
+suite-root-invocation.log
+---
+
+> test
+> node run-all.js
+
+PASS  markers appear while accumulating
+PASS  popover lists all 3 members
+PASS  primary marked first
+PASS  count reads 3 elements
+PASS  title shows +2
+PASS  zoom row hidden for group
+PASS  markers persist while popover open (2 non-primary)
+PASS  style preview hits all 3 selected
+PASS  style preview skips unselected
+PASS  removed member reverts its preview
+PASS  remaining members keep preview
+PASS  list shrinks to 2 after remove
+PASS  marker removed too
+PASS  promote reorders the list
+PASS  add-element banner shown
+PASS  added element joins the list
+PASS  pending tweak carries onto the new member
+PASS  annotation saved
+PASS  saved annotation keeps 2 other members
+PASS  member refs carry selector + text
+
+--- API keys: ["markdown","json","annotations","clear","openPanel","setProjectRoot"] ---
+--- MARKDOWN ---
+# Feedback — RF Harness
+Page: file:///Users/server/Development/rapid-feedback/test/page.html
+Env: 1200×800 · Chrome 153 on macOS
+
+## 1. [GENERAL] Second card
+> Second card
+Align these cards
+
+padding: 40px;
+Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Where: div#c2.card
+Rect: 242×162
+Group: 3 elements (this + 2)
+  • div#c1 "First card"
+    Where: div#c1.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+  • div#c4 "Fourth card"
+    Where: div#c4.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Tweak (all 3 elements):
+  padding: 40px;
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cat artifacts/automation-receipts/2026-09-16/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md 2>&1 | head -80
+# Automation receipt — rapid-feedback-0700, attempt 1 (2026-09-16)
+
+```json
+{"schema_version":1,"run_id":"rapid-feedback-0700","attempt":1,"status":"meaningful-progression","failure_class":"none","time_box":"checkpointed-at-cutoff","started_at":"2026-09-16T11:21:05+12:00","finished_at":"PENDING","next_action":"PENDING","evidence":[]}
+```
+
+Scheduler note: no run_id/attempt was supplied inline; the goal template's literal
+`rapid-feedback-0700` was used as run_id (attempt 1 — no prior 0700 receipt exists today;
+the earlier 0730 wave is a separate receipt). Status/time_box/next_action/evidence are
+appended to as the wave proceeds; this header is the living record, not an end-of-run
+reconstruction.
+
+## Plan (admitted playbooks, stable order)
+
+- quick-scan — ADMITTED (native, bounded): hotspots since the 09-15 scan baseline
+  (7eed262 harness waitFor, 0be14c2/922d147 user.js) + docs-vs-code check.
+- abstraction-zoom — ADMITTED (native, bounded): v5.18-added functions in
+  rapid-feedback.user.js (270fca0 delta, ~85 lines) not yet abstraction-reviewed.
+- forced-subtraction — ADMITTED (native analysis only): one area, GOES/STAYS/BREAKS,
+  deletions ticketed (hostile review applies if a deletion is implemented this wave).
+- pain-journal — ADMITTED (native): journal is live; mine the unmined 2026-09-16 entry.
+
+Child budget: max 3 total (opencode2 reviewers count). Reserved: 1 hostile review for the
+wave's scoped commit; spares for reconciliation only.
+
+## Log
+
+- 11:21 started; state gathered (open tickets #41–#43 from 0730 wave; pain journal has one
+  unmined entry; 0730 next_action queue noted as input but this wave's goal is discovery).
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh -R JavaGT/rapid-feedback issue view 45 2>&1 | head -80
+title:	[wave 2026-09-16] Harness friction: bare 'cd test' persists into later shell calls — document root-level suite invocation in AGENTS.md
+state:	OPEN
+author:	JavaGT (JavaGT)
+labels:	
+comments:	0
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	45
+--
+Source: pain-journal mining, wave 2026-09-16 (0700). Entry: '2026-09-16 | shell | cd test/ for the suite persisted into the next tool call and broke the following git pathspec (ambiguous argument)'.
+
+**Root cause.** The suite's documented invocation is `cd test && npm install && npm test` (README/AGENTS.md point at the harness). Shell working directories persist across tool calls in every agent runtime here, so the next repo-root git command runs from `test/` and dies on pathspecs. This is recurring ambient friction, already foreshadowed by the zsh-discipline notes.
+
+**Fix (agreed, implementing this wave).** One conventions line in repo AGENTS.md: run the suite as `npm --prefix test test` from the repo root, or wrap as `(cd test && npm test)` — never a bare `cd test`. `npm --prefix` keeps the caller's cwd. Focused check: the documented command is itself the check — full 8-suite run from repo root must pass (baseline 107/107, ~24s).
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls package.json 2>&1; echo "---root pkg---"; cat package.json 2>&1 | head; echo "=== page.html refs ==="; rg -n "page\.html|__dirname|process.cwd" test/common.js test/run*.js | head -20
+ls: package.json: No such file or directory
+---root pkg---
+cat: package.json: No such file or directory
+=== page.html refs ===
+test/common.js:5:const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+test/common.js:42:		await page.goto('file://' + path.join(__dirname, 'page.html'));
+test/run5.js:99:		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
+test/run4.js:7:const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+test/run4.js:17:		await page.goto('file://' + path.join(__dirname, 'page2.html'));
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n "cd test|shell|persist" ~/.config/opencode/pain-journals/rapid-feedback.md 2>&1 | tail -20; echo "=== tail journal ==="; tail -25 ~/.config/opencode/pain-journals/rapid-feedback.md
+7:2026-09-16 | mined | shell entry resolved: repo AGENTS.md suite invocation is now `npm --prefix test install && npm --prefix test test` from the repo root (verified 8/8 green); bare `cd test` named as the hazard (#45, commit follows).
+=== tail journal ===
+# Pain journal — rapid-feedback
+Format: one line per entry — date | area | one line of friction.
+
+2026-09-10 | lost target | Target-removal friction converged via 3 patches (v5.5 missing-member disclosure, setLostState :1578, submit-after-removal 2026-08-30) — stable, watch only.
+2026-09-11 | mined | 2026-09-10 entries mined to tickets: popover→#3, escape→#5/#1, select-similar→#24, selectors→#7, data-loss→#8, tests→#9 (+cross-exam comment), process→#25 (repo AGENTS.md added, commit 8d89e83); pruned the mined lines, kept the watch item above.
+2026-09-15 | mined | 2026-09-13 entries resolved: rg-hidden → AGENTS.md conventions line (--hidden when searching .scratch); zsh-echo → already encoded in AGENTS.md zsh discipline, guard worked as designed.
+2026-09-16 | mined | shell entry resolved: repo AGENTS.md suite invocation is now `npm --prefix test install && npm --prefix test test` from the repo root (verified 8/8 green); bare `cd test` named as the hazard (#45, commit follows).
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -c "^PASS" artifacts/wave-2026-09-16-0700/suite-root-invocation.log; echo "=== first 30 lines with numbers ==="; sed -n '1,12p' artifacts/wave-2026-09-16-0700/suite-root-invocation.log
+107
+=== first 30 lines with numbers ===
+
+> test
+> node run-all.js
+
+PASS  markers appear while accumulating
+PASS  popover lists all 3 members
+PASS  primary marked first
+PASS  count reads 3 elements
+PASS  title shows +2
+PASS  zoom row hidden for group
+PASS  markers persist while popover open (2 non-primary)
+PASS  style preview hits all 3 selected
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '80,92p' README.md
+## Tests
+
+The dev-only Puppeteer harness runs the userscript against `test/page.html` in headless Chrome:
+
+```sh
+cd test
+npm install
+npm test
+```
+
+It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
+[0m◈ [0mWeb Search via Firecrawl "Tampermonkey userscript @note metadata display install page" 
+> deepseek-v4.1-flash · deepseek-flash
+[0m% [0mWebFetch https://www.tampermonkey.net/documentation.php 
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && nl -ba rapid-feedback.user.js | sed -n '1,33p'
+1	// ==UserScript==
+     2	// @name         Rapid Feedback
+     3	// @namespace    javagrant.ac.nz
+     4	// @version      5.18
+     5	// @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+     6	// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+     7	// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+     8	// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+     9	// @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+    10	// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+    11	// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
+    12	// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
+    13	// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
+    14	// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
+    15	// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
+    16	// @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
+    17	// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+    18	// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+    19	// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+    20	// @note         v5.3.1: component chain shows file names instead of full paths
+    21	// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
+    22	// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+    23	// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+    24	// @author       JavaGT
+    25	// @match        *://*/*
+    26	// @grant        none
+    27	// @homepageURL  https://github.com/JavaGT/rapid-feedback
+    28	// @supportURL   https://github.com/JavaGT/rapid-feedback/issues
+    29	// @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+    30	// @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+    31	// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+    32	// ==/UserScript==
+    33
+[0m$ [0mcd /Users/server/Development/rapid-feedback && nl -ba README.md | sed -n '80,92p'; echo "=== AGENTS line ==="; nl -ba AGENTS.md | sed -n '6,10p'
+80	
+    81	## Tests
+    82	
+    83	The dev-only Puppeteer harness runs the userscript against `test/page.html` in headless Chrome:
+    84	
+    85	```sh
+    86	cd test
+    87	npm install
+    88	npm test
+    89	```
+    90	
+    91	It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
+=== AGENTS line ===
+     6	
+     7	- `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. The `oxalpha-redesign/`, `luna-redesign/`, and `deepseek-redesign/` one-shot experiments were deleted (#11, #39); their comparisons remain in `.scratch/comparison-oxalpha.md`, `.scratch/comparison.md`, and `.scratch/comparison-deepseek.md`.
+     8	- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run from the repo root with `npm --prefix test install && npm --prefix test test` (or a `(cd test && npm test)` subshell) — a bare `cd test` persists into later shell calls and breaks the next repo-root git command (#45); override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
+     9	- `.scratch/` is per-agent working space (notes, plans, repro pages). Untracked files anywhere — including `test/repro-h1.js` — may be another agent's in-flight work: read-only until claimed.
+    10
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && npm --version && npm --prefix test prefix && npm --prefix test pkg get name scripts devDependencies 2>&1 | head -20
+11.19.0
+/Users/server/Development/rapid-feedback/test
+{
+  "scripts": {
+    "test": "node run-all.js"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
+[0m$ [0mcd /Users/server/Development/rapid-feedback && npm --prefix test install --dry-run 2>&1 | tail -8
+up to date in 241ms
+> deepseek-v4.1-flash · deepseek-flash
+Now filing the verdicts on the two tickets under review (tracker writes only — no repo/code changes).
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh -R JavaGT/rapid-feedback issue comment 45 --body 'Hostile check (wave 6077199, read-only).
+
+**The replacement command works as documented.** `test/package.json:2` maps `test` → `node run-all.js`; the suites resolve their inputs from `__dirname` (`test/common.js:5,42`, `test/run4.js:7,17`, `test/run5.js:99`), so cwd does not affect them. `npm --prefix test prefix` → `/Users/server/Development/rapid-feedback/test`; `npm --prefix test install --dry-run` → "up to date". `artifacts/wave-2026-09-16-0700/suite-root-invocation.log:176` ends "8/8 suites passed" with 107 `PASS` lines, matching the 107/107 baseline. (Evidentiary gap: the log captures npm output but not the invoking command line, so it proves a green npm `test` run, not provably a repo-root `--prefix` invocation.)
+
+**Hazard wording is overbroad.** In this runtime (OpenCode shell tool) cwd does NOT persist across tool calls: `cd /private/tmp` followed by a separate `pwd` returned the repo root. That refutes "persists across tool calls in every agent runtime here" for at least this runtime. The real risk is a *chained* command in one call (`cd test && …` then a later repo-root git command) or a genuinely persistent-shell runtime. The `--prefix` / subshell mitigation is still correct and harmless.
+
+**Contradiction.** `README.md:85-89` still documents the bare `cd test`; `npm install`; `npm test` sequence that `AGENTS.md:8` now names the hazard. AGENTS.md is internally consistent; the divergence is README-vs-AGENTS. Since README targets humans (no persistent shell), this is MINOR rather than wrong.'
+https://github.com/JavaGT/rapid-feedback/issues/45#issuecomment-5689591939
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh -R JavaGT/rapid-feedback issue comment 44 --body 'Hostile check (wave 6077199, read-only). Verdicts on the GOES/STAYS/BREAKS claims:
+
+- **"`rapid-feedback.user.js:6-31`, 19 entries, ~26 header lines"** — MINOR. 19 `@note` lines is correct (lines 6-23 + 31), but 6-31 is not one contiguous block: lines 24-30 are `@author`/`@match`/`@grant`/`@homepageURL`/`@supportURL`/`@updateURL`/`@downloadURL`. The block is also not chronological.
+- **"nothing parses @note"** — APPROVED. `test/*.js` read the whole script (`test/common.js:5`, `test/run4.js:7`, `test/run5.js:99`) but no header parser exists; `@note` appears elsewhere only as prose in `.scratch/*.md` and `artifacts/*.log`.
+- **"GOES = all but newest ~3 (v5.18/v5.17/v5.16)"** — FIX-FIRST. Newest-by-version are lines 6-8, but scrambled (v5.16 on line 6 sits above v5.18:7 and v5.17:8); the oldest note, v5.0, is line 31 *after* the URL fields, and v5.1 is line 23. A literal "keep the last N notes" deletes the newest and keeps v5.0. The deletion set must be specified by version, not by position.
+- **"STAYS = newest notes: what a Tampermonkey update prompt / script editor shows"** — FIX-FIRST. Contradicts this issue\u2019s own finding ("Tampermonkey only acts on the structured fields") and "nothing parses @note". Tampermonkey\u2019s documented metadata keys do not include `@note` (tampermonkey.net/documentation.php); no update prompt renders it. The only surface is raw source in the editor (i.e. the whole file), so the retention rationale reduces to human archaeology — which the BREAKS claim already concedes.
+- **"BREAKS = nothing at runtime; git log fully covers it"** — APPROVED (caveat). No reader/execution path touches `@note`; but git history is not version-tagged, so "fully covers it" is optimistic — version-bump commits such as `270fca0` do carry the text.
+- **"block only ever grows; v5.18 added a line"** — APPROVED. `git show 270fca0` adds `+ // @note v5.18: …`.
+
+Net: evaluate-only, no code change. If the owner agrees, the follow-up is a prune specified **by version**, with the STAYS rationale corrected to "human-readable header".'
+https://github.com/JavaGT/rapid-feedback/issues/44#issuecomment-5689591979
+> deepseek-v4.1-flash · deepseek-flash
+Hostile review of commit `6077199` complete. Repo untouched; verdicts filed as comments on the two tickets under review (#44, #45) per this repo's tracker convention.
+
+## Scope 1 — AGENTS.md suite-invocation change (ticket #45)
+
+**The documented command works — APPROVED.** `test/package.json:2` maps `test` → `node run-all.js`, and every suite resolves inputs from `__dirname` (`test/common.js:5,42`, `test/run4.js:7,17`, `test/run5.js:99`), so cwd is irrelevant. Confirmed live: `npm --prefix test prefix` → `/Users/server/Development/rapid-feedback/test`; `npm --prefix test install --dry-run` → "up to date".
+
+**"8/8 suites passed" supported — APPROVED with a gap.** `artifacts/wave-2026-09-16-0700/suite-root-invocation.log:176` = `8/8 suites passed`, with 107 `PASS` lines matching the 107/107 baseline. Gap: the log captures npm output (`> test` / `> node run-all.js`) but not the invoking command line, so it proves a green npm `test` run, not provably a repo-root `--prefix` invocation.
+
+**cwd-persistence hazard — FIX-FIRST (overbroad, not false-in-practice).** In this runtime the claim does not hold: `cd /private/tmp` then a *separate* `pwd` returned the repo root — cwd resets per tool call here. So #45's "persists across tool calls in every agent runtime here" is refuted for at least the OpenCode shell tool. The genuine risk is a *chained* command in one call, or a truly persistent-shell runtime. The `--prefix`/subshell mitigation is still correct and harmless.
+
+**Contradiction — MINOR.** AGENTS.md:8 is self-consistent, but `README.md:85-89` still documents exactly the bare `cd test; npm install; npm test` sequence AGENTS.md now names the hazard. README targets humans (no persistent shell), so it is stale rather than wrong.
+
+## Scope 2 — Ticket #44 claims (`rapid-feedback.user.js:6-31`)
+
+- **`6-31`, 19 entries — MINOR.** 19 is right (lines 6-23 + 31), but 6-31 is not one block: lines 24-30 are `@author`/`@match`/`@grant`/URL fields.
+- **"nothing parses @note" — APPROVED.** Whole-file reads only (`test/common.js:5`, `run4.js:7`, `run5.js:99`); no header parser; prose-only mentions elsewhere.
+- **"GOES = all but newest ~3" — FIX-FIRST.** The block is not chronological: newest are lines 6-8 but scrambled (v5.16:6 above v5.18:7/v5.17:8), and oldest v5.0 is line 31 *after* the URL fields. "Keep the last N" literally deletes the newest and keeps v5.0. Delete by version, not position.
+- **"STAYS = newest notes (TM update prompt/editor)" — FIX-FIRST.** Contradicts its own "TM only acts on structured fields"; Tampermonkey's documented metadata keys exclude `@note`. No update prompt renders it; only raw source in the editor does — i.e. the retention rationale is human archaeology, which BREAKS already concedes.
+- **"BREAKS = nothing at runtime" — APPROVED** (caveat: history isn't version-tagged, so "git log fully covers it" is optimistic; `270fca0` does carry the v5.18 text).
+- **"only ever grows; v5.18 added a line" — APPROVED** (`git show 270fca0` adds `+ // @note v5.18`).
+
+### Receipt
+```
+Wave 6077199 hostile review — READ-ONLY repo. Verdicts filed: #44 comment …5689591979, #45 comment …5689591939.
+Scope1 @note-n/a. AGENTS.md:8 command: APPROVED (test/package.json:2; __dirname-based suites; prefix resolves test/; log:176 8/8, 107 PASS=baseline; gap: no invoking cmdline). cwd-persistence claim: FIX-FIRST — NOT true here (cd /private/tmp then separate pwd => repo root); overbroad "every runtime"; real risk = chained cmds. README.md:85-89 still shows old bare `cd test` => MINOR contradiction.
+Scope2 #44: "nothing parses @note" APPROVED; GOES-by-position FIX-FIRST (non-chronological: v5.16:6,v5.18:7,v5.17:8,oldest v5.0:31); STAYS rationale FIX-FIRST (TM docs list no @note; contradicts own "structured fields only"); BREAKS APPROVED (caveat: untagged history); "only grows/v5.18" APPROVED (270fca0). Net: evaluate-only — if approved, prune by version with corrected STAYS wording. No code changed.
+```
+
+Next concrete step: if you want the `--prefix` hazard wording narrowed to "chained commands / persistent-shell runtimes" and README aligned, I can do that as a small follow-up commit — otherwise leave #44/#45 as the durable record.
