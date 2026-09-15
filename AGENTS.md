@@ -4,7 +4,7 @@ Settled facts for agents working in this repo. Feature/install docs live in [REA
 
 ## What is what
 
-- `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. Do not develop in `oxalpha-redesign/` — a frozen one-shot rebuild experiment kept for comparison (#11 tracks its deletion). The `luna-redesign/` and `deepseek-redesign/` experiments were deleted 2026-09-13 (#39); their comparisons remain in `.scratch/comparison.md` and `.scratch/comparison-deepseek.md`.
+- `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. The `oxalpha-redesign/`, `luna-redesign/`, and `deepseek-redesign/` one-shot experiments were deleted (#11, #39); their comparisons remain in `.scratch/comparison-oxalpha.md`, `.scratch/comparison.md`, and `.scratch/comparison-deepseek.md`.
 - `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run with `cd test && npm install && npm test`; override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
 - `.scratch/` is per-agent working space (notes, plans, repro pages). Untracked files anywhere — including `test/repro-h1.js` — may be another agent's in-flight work: read-only until claimed.
 
