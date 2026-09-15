@@ -1336,7 +1336,7 @@
 		savePopoverOffset();
 		if (popoverEl) {
 			const el = anchor?.getTarget?.();
-			const rect = el?.isConnected ? getViewportRect(el) : { top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), right: Math.max(8, (innerWidth + POPOVER_W) / 2) };
+			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
 			placePopoverAt(popoverEl, rect, measurePopover());
 			anchor?.wake?.();
 		}
@@ -1352,6 +1352,14 @@
 		if (r.left - popoverW - gap >= pad) return { top: clamp(r.top, pad, innerHeight - popoverH - pad), left: r.left - popoverW - gap };
 		const bestY = r.top > innerHeight / 2 ? r.top - popoverH - gap : r.bottom + gap;
 		return { top: clamp(bestY, pad, innerHeight - popoverH - pad), left: clamp(r.left, pad, innerWidth - popoverW - pad) };
+	}
+
+	// Rect used when the anchor target is gone (e.g. the page re-rendered under
+	// a dragged popover): horizontally centered with placePopover's 8px edge
+	// pad, near the top of the viewport. Keep edge policy in one place.
+	function centeredFallbackRect() {
+		const pad = 8;
+		return { top: 80, bottom: 80, left: Math.max(pad, (innerWidth - POPOVER_W) / 2), right: Math.max(pad, (innerWidth + POPOVER_W) / 2) };
 	}
 
 	// The popover and outline are position:fixed, so a scroll or layout shift slides
@@ -1427,7 +1435,7 @@
 		// Pin the record being edited by identity so a panel delete that shifts
 		// array indices mid-edit cannot redirect Submit onto another annotation.
 		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
-			try { initial.editRef = annotations[initial.editIndex]; } catch {}
+			initial.editRef = annotations[initial.editIndex];
 		}
 		const { host, root } = createShadowRoot();
 		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
