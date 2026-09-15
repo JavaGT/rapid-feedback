@@ -1,0 +1,494 @@
+[0m
+> deepseek-v4.1-flash · deepseek-flash
+I'll start by examining the repo state and the two commits.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline -6 && echo '---' && git status --short
+460a0dc Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+922d147 Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+617ba18 Wave 2026-09-15 artifacts: quick-scan report, suite logs, automation receipt (#29/#13/#35 landed, #40 filed)
+fbd4e1e AGENTS.md: refresh stale dirty-path note (v5.18 landed 270fca0); add rg --hidden convention
+7eed262 Harness: waitFor bounded-polling predicates replace run.js settle-sleeps (#35 slice)
+a0f4d02 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+---
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+?? .scratch/quick-scan-2026-09-10.md
+?? artifacts/automation-receipts/2026-09-16/
+?? artifacts/wave-2026-09-16/
+?? test/repro-h1.js
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show --stat 922d147 && echo '===' && git show --stat 460a0dc
+commit 922d147fa01b31111d326e0cf87c9bbc12d741d3
+Author: JavaGT <java@javagrant.com>
+Date:   Wed Sep 16 07:47:02 2026 +1200
+
+    Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+
+ rapid-feedback.user.js | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+===
+commit 460a0dc830b7eade5bd0c974b9b98b35d4acde58
+Author: JavaGT <java@javagrant.com>
+Date:   Wed Sep 16 07:47:24 2026 +1200
+
+    Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+    
+    Sequencing gate cleared: blind-plan lane gone (no worktree, no branch).
+
+ oxalpha-redesign/DESIGN.md              |  114 ---
+ oxalpha-redesign/rapid-feedback.user.js | 1537 -------------------------------
+ 2 files changed, 1651 deletions(-)
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 922d147
+commit 922d147fa01b31111d326e0cf87c9bbc12d741d3
+Author: JavaGT <java@javagrant.com>
+Date:   Wed Sep 16 07:47:02 2026 +1200
+
+    Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+
+diff --git a/rapid-feedback.user.js b/rapid-feedback.user.js
+index e94ed99..d0083a7 100644
+--- a/rapid-feedback.user.js
++++ b/rapid-feedback.user.js
+@@ -1336,7 +1336,7 @@
+ 		savePopoverOffset();
+ 		if (popoverEl) {
+ 			const el = anchor?.getTarget?.();
+-			const rect = el?.isConnected ? getViewportRect(el) : { top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), right: Math.max(8, (innerWidth + POPOVER_W) / 2) };
++			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+ 			placePopoverAt(popoverEl, rect, measurePopover());
+ 			anchor?.wake?.();
+ 		}
+@@ -1354,6 +1354,14 @@
+ 		return { top: clamp(bestY, pad, innerHeight - popoverH - pad), left: clamp(r.left, pad, innerWidth - popoverW - pad) };
+ 	}
+ 
++	// Rect used when the anchor target is gone (e.g. the page re-rendered under
++	// a dragged popover): horizontally centered with placePopover's 8px edge
++	// pad, near the top of the viewport. Keep edge policy in one place.
++	function centeredFallbackRect() {
++		const pad = 8;
++		return { top: 80, bottom: 80, left: Math.max(pad, (innerWidth - POPOVER_W) / 2), right: Math.max(pad, (innerWidth + POPOVER_W) / 2) };
++	}
++
+ 	// The popover and outline are position:fixed, so a scroll or layout shift slides
+ 	// them off their target. Re-project both against the live rect once per frame
+ 	// while the popover is open. When nothing changes for 20 consecutive frames
+@@ -1427,7 +1435,7 @@
+ 		// Pin the record being edited by identity so a panel delete that shifts
+ 		// array indices mid-edit cannot redirect Submit onto another annotation.
+ 		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
+-			try { initial.editRef = annotations[initial.editIndex]; } catch {}
++			initial.editRef = annotations[initial.editIndex];
+ 		}
+ 		const { host, root } = createShadowRoot();
+ 		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:rapid-feedback.user.js > /tmp/rf_head.js && wc -l /tmp/rf_head.js && grep -n 'centeredFallbackRect\|POPOVER_W\s*=' /tmp/rf_head.js
+3146 /tmp/rf_head.js
+132:	const POPOVER_W = 320;
+1339:			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+1360:	function centeredFallbackRect() {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -rn 'centeredFallbackRect\|oxalpha' --include='*.js' --include='*.md' --include='*.json' . 2>/dev/null | grep -v node_modules | grep -v '.git/'
+./artifacts/wave-2026-09-11/abstraction-zoom.md:4:Excluded: luna-redesign, deepseek-redesign, oxalpha-redesign, .scratch.
+./artifacts/wave-2026-09-11/forced-subtraction.md:13:| **c. Redesign experiments** | `luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` | ⏸ deferred |
+./artifacts/wave-2026-09-11/forced-subtraction.md:16:**Issues already covering overlaps:** #13 (legacy storage migration), #9 (test harness gaps incl. repro-h1.js), #11 (oxalpha-redesign deletion).
+./artifacts/wave-2026-09-13/hostile-review-39.md:12:?? .scratch/oxalpha-blind-plan.md
+./artifacts/wave-2026-09-13/hostile-review-39.md:30:/Users/server/Development/rapid-feedback/AGENTS.md:7:- `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. Do not develop in `oxalpha-redesign/` — a frozen one-shot rebuild experiment kept for comparison (#11 tracks its deletion). The `luna-redesign/` and `deepseek-redesign/` experiments were deleted 2026-09-13 (#39); their comparisons remain in `.scratch/comparison.md` and `.scratch/comparison-deepseek.md`.
+./artifacts/wave-2026-09-13/hostile-review-39.md:32:/Users/server/Development/rapid-feedback/.scratch/quick-scan-2026-09-10.md:37:`deepseek-redesign/` (2,330 lines), `luna-redesign/` (93), `oxalpha-redesign/` (1,537) are independent blind rebuilds (distinct namespaces/versions, frozen Aug 21), unreferenced by README or tests. Verified they are NOT stale copies of the main script (no drift risk), and deletion is already covered by issues #6, #10, #11. No new issue filed.
+./artifacts/wave-2026-09-13/hostile-review-39.md:41:/Users/server/Development/rapid-feedback/artifacts/wave-2026-09-11/forced-subtraction.md:13:| **c. Redesign experiments** | `luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` | ⏸ deferred |
+./artifacts/wave-2026-09-13/hostile-review-39.md:42:/Users/server/Development/rapid-feedback/artifacts/wave-2026-09-11/abstraction-zoom.md:4:Excluded: luna-redesign, deepseek-redesign, oxalpha-redesign, .scratch.
+./artifacts/wave-2026-09-13/hostile-review-39.md:43:/Users/server/Development/rapid-feedback/artifacts/wave-2026-09-12/forced-subtraction.md:15:| `luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` | Deferred; deletion is tracked in #11. |
+./artifacts/wave-2026-09-13/hostile-review-39.md:67:.scratch/comparison-oxalpha.md
+./artifacts/wave-2026-09-13/hostile-review-39.md:76:**(3) Comparisons tracked — PASS.** `git ls-files .scratch | grep comparison` → `.scratch/comparison-deepseek.md`, `.scratch/comparison-oxalpha.md`, `.scratch/comparison.md`.
+./artifacts/wave-2026-09-13/abstraction-zoom.md:13:| Frozen redesign dirs | n/a — frozen experiments | Deletion tracked: oxalpha #11 (claimed, sequenced), luna+deepseek #39 (executed this wave, commit `9eb0911`) |
+./artifacts/wave-2026-09-13/abstraction-zoom.md:22:- `.scratch/`, `luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` —
+./artifacts/wave-2026-09-13/forced-subtraction.md:4:(hostile-APPROVED, closed) · Sibling ticket: #11 (oxalpha, claimed by the
+./artifacts/wave-2026-09-13/forced-subtraction.md:14:| `oxalpha-redesign/` | **Deferred** — #11, claimed and sequenced behind the blind-plan lane (checkpoint comment posted this wave) |
+./artifacts/wave-2026-09-12/forced-subtraction.md:15:| `luna-redesign/`, `deepseek-redesign/`, `oxalpha-redesign/` | Deferred; deletion is tracked in #11. |
+./artifacts/wave-2026-09-15/quick-scan.md:41:- oxalpha-redesign/ (#11 remains sequenced behind the blind-plan lane;
+./artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:4:{"schema_version":1,"run_id":"rapid-feedback-0730","attempt":1,"status":"success","failure_class":"dispatch-failure","time_box":"completed-within-budget","started_at":"2026-09-15T07:31:19+12:00","finished_at":"2026-09-15T08:12:00+12:00","next_action":"Next wave: re-verify the opencode2 route table (this run's policy window was stale), hostile-review a0f4d02 (#29/#13) and 7eed262 (#35 slice) and reconcile those tickets, then continue #35 F4/F5 or #36/#34 per the 09-13 sequencing; #11 (oxalpha deletion) stays gated on blind-plan lane closure evidence.","evidence":[{"path":"artifacts/wave-2026-09-15/quick-scan.md","kind":"artifact"},{"path":"artifacts/wave-2026-09-15/suite-29-fix.log","kind":"check"},{"path":"artifacts/wave-2026-09-15/suite-35.log","kind":"check"},{"path":"artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md","kind":"artifact"}]}
+./artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:18:  oxalpha-redesign/ (#11-sequenced, frozen) and run2-run8 suite bodies
+./artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:28:  unchanged, recorded on #29. oxalpha (#11) deferred again — lane-liveness
+./artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:74:  re-verification; #35 F4/F5 slices; #11 oxalpha deletion (gated on
+./artifacts/automation-receipts/2026-09-13/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md:4:{"schema_version":1,"run_id":"rapid-feedback-0700","attempt":1,"status":"success","failure_class":"none","time_box":"completed-within-budget","started_at":"2026-09-13T09:05:04+12:00","finished_at":"2026-09-13T09:30:00+12:00","next_action":"Next wave: implement harness refactors (#35 wait-predicate slice first, then #36, #34) once the v5.18 lane lands and the 8-suite baseline is trustworthy; execute oxalpha deletion #11 once the blind-plan lane closes; owner call pending on push discipline (#23, local main now leads origin).","evidence":[{"path":"artifacts/wave-2026-09-13/forced-subtraction.md","kind":"artifact"},{"path":"artifacts/wave-2026-09-13/quick-scan.md","kind":"artifact"},{"path":"artifacts/wave-2026-09-13/abstraction-zoom.md","kind":"artifact"},{"path":"artifacts/wave-2026-09-13/deletion-sim-test.log","kind":"check"},{"path":"artifacts/wave-2026-09-13/hostile-review-39.md","kind":"check"},{"path":"artifacts/automation-receipts/2026-09-13/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md","kind":"artifact"}]}
+./artifacts/automation-receipts/2026-09-13/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md:20:  oxalpha (#11) and the userscript (#29 et al.) deferred with checkpoints.
+./artifacts/automation-receipts/2026-09-13/rapid-feedback-0700-attempt-1-rapid-feedback-0700.md:57:  oxalpha #11 behind the blind-plan lane; #23 awaiting owner decision.
+./artifacts/automation-receipts/2026-09-16/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:26:  main, `git branch -a` shows no blind-plan branch, and `git status oxalpha-redesign/`
+./artifacts/automation-receipts/2026-09-16/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:28:  --hidden -i oxalpha` (excluding the folder and *.md) → zero references in code/tests.
+./artifacts/automation-receipts/2026-09-16/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:33:  (1) inline centered fallback rect → named `centeredFallbackRect()` brick beside
+./artifacts/automation-receipts/2026-09-16/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md:43:- `460a0dc` — #11 oxalpha deletion (oxalpha-redesign/ only; -1,651).
+./.scratch/blind-plan-vs-existing.md:3:Sources: `.scratch/oxalpha-blind-plan.md` (designed from the brief only) vs `.scratch/existing-app-outline.md` (line-cited outline of `rapid-feedback.user.js` v5.13, 2,255 lines).
+./.scratch/forced-subtraction-2026-09-10.md:102:`.scratch/comparison.md`, `comparison-deepseek.md`, `comparison-oxalpha.md`, and every idea worth
+./.scratch/forced-subtraction-2026-09-10.md:108:untracked `.scratch/oxalpha-blind-plan.md` / `blind-plan-vs-existing.md` work from plan documents,
+./.scratch/forced-subtraction-2026-09-10.md:109:**not** from the `oxalpha-redesign/` folder (rg: no reference) — no collision, but deletion should
+./.scratch/forced-subtraction-2026-09-10.md:116:| `oxalpha-redesign/` | 1,537-line script + DESIGN.md | GOES — "verified working" per comparison but superseded; zero refs from code/tests. Sequence after the in-flight blind-plan lane closes. |
+./.scratch/forced-subtraction-2026-09-10.md:167:| #11 | Delete `oxalpha-redesign/` (1,651 lines) | Confirmed deletion (sequence after in-flight blind-plan lane closes) | No refs from code/tests; comparison complete. |
+./.scratch/abstraction-zoom-2026-09-10.md:118:and oxalpha-redesign/rapid-feedback.user.js:309 (with captureA11y/captureSvelte sub-bricks).
+./.scratch/abstraction-zoom-2026-09-10.md:254:- The redesign folders as convergence evidence: deepseek (2330 lines) and oxalpha (1537 lines) both factored capture (F2), exporters (F3), and similarity (F4-adjacent) into named single-responsibility functions; luna (93 lines) compresses everything but keeps `target(el)` as one capture function.
+./.scratch/comparison-oxalpha.md:3:Same protocol: OX Alpha Free got only `.scratch/app-brief.md`. Delivered `oxalpha-redesign/` (1,537-line userscript + 114-line DESIGN.md). **Verified working** in headless Chrome: group gesture → numbered markers → popover → submit → export → panel, zero page errors.
+./.scratch/quick-scan-2026-09-10.md:37:`deepseek-redesign/` (2,330 lines), `luna-redesign/` (93), `oxalpha-redesign/` (1,537) are independent blind rebuilds (distinct namespaces/versions, frozen Aug 21), unreferenced by README or tests. Verified they are NOT stale copies of the main script (no drift risk), and deletion is already covered by issues #6, #10, #11. No new issue filed.
+./AGENTS.md:7:- `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. Do not develop in `oxalpha-redesign/` — a frozen one-shot rebuild experiment kept for comparison (#11 tracks its deletion). The `luna-redesign/` and `deepseek-redesign/` experiments were deleted 2026-09-13 (#39); their comparisons remain in `.scratch/comparison.md` and `.scratch/comparison-deepseek.md`.
+./rapid-feedback.user.js:1339:			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+./rapid-feedback.user.js:1360:	function centeredFallbackRect() {
+> deepseek-v4.1-flash · deepseek-flash
+[0m→ [0mRead /tmp/rf_head.js [90m[offset=1300, limit=150][0m
+[0m→ [0mRead /tmp/rf_head.js [90m[offset=80, limit=70][0m
+> deepseek-v4.1-flash · deepseek-flash
+Now let me verify claim (b) by tracing `initial` / `editRef` and the platform-accessor guards.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n 'editRef\|editIndex\|showPopover(' /tmp/rf_head.js
+1433:	function showPopover(el, data, initial) {
+1437:		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
+1438:			initial.editRef = annotations[initial.editIndex];
+1851:				editIndex: initial?.editIndex,
+1852:				editRef: initial?.editRef || null,
+2007:				const ref = initial?.editRef;
+2010:				else if (Number.isInteger(initial?.editIndex) && !ref && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
+2095:		showPopover(targets[0], capturableEl(targets[0]).data, { members: [...targets] });
+2371:			showPopover(primary, capturableEl(primary).data, {
+2378:				editIndex: idx,
+2635:			showPopover(sourceEl, sourceData, draft);
+2638:			showPopover(sourceEl, sourceData, { ...draft, destination: result || draft.destination });
+2792:		showPopover(target, capturableEl(target).data);
+2920:			showPopover(unique[0], capturableEl(unique[0]).data);
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 922d147^:rapid-feedback.user.js > /tmp/rf_prev.js && sed -n '84,100p' /tmp/rf_prev.js && echo '--- strict mode? ---' && head -20 /tmp/rf_head.js | grep -n "use strict" ; grep -c "use strict" /tmp/rf_head.js
+let path = null;
+		try { path = typeof e.composedPath === 'function' ? e.composedPath() : null; } catch { path = null; }
+		const nodes = Array.isArray(path) && path.length ? path : [e.target];
+		for (const n of nodes) {
+			if (!n || n.nodeType !== 1) continue;
+			const tag = n.tagName;
+			if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return n;
+			try { if (n.isContentEditable) return n; } catch {}
+		}
+		return null;
+	}
+
+	const CATEGORIES = [
+		{ id: 'general', label: 'General' },
+		{ id: 'bug', label: 'Bug' },
+		{ id: 'feature', label: 'Feature' },
+		{ id: 'suggestion', label: 'Suggestion' },
+--- strict mode? ---
+1
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "use strict" /tmp/rf_head.js && echo '--- call sites contexts ---' && sed -n '2360,2385p' /tmp/rf_head.js && echo '--- draft at 2625-2645 ---' && sed -n '2620,2645p' /tmp/rf_head.js
+35:	'use strict';
+--- call sites contexts ---
+				return;
+			}
+			// Reopening the popover only makes sense on the page the annotation was
+			// taken on — the same selector can match an unrelated element elsewhere,
+			// which would silently retarget the annotation. Anywhere else, or when the
+			// element has gone, fall back to editing the comment in place so a comment
+			// is always editable.
+			const primary = a.url === location.href ? resolveStoredMember(a) : null;
+			if (!primary) { toggleInlineComment(list, idx, a, btn); return; }
+			const refs = a.targets || [];
+			const found = refs.map(resolveStoredMember);
+			showPopover(primary, capturableEl(primary).data, {
+				comment: a.comment,
+				category: a.category,
+				adjustedStyles: a.adjustedStyles,
+				destination: a.destination,
+				members: [primary, ...found.filter(Boolean)],
+				missingMembers: refs.filter((ref, i) => !found[i]),
+				editIndex: idx,
+			});
+		});
+
+		const footer = document.createElement('div');
+		footer.className = 'rf-panel-footer';
+		const ftCatBar = document.createElement('div');
+		ftCatBar.style.cssText = 'display:flex;gap:4px;margin-bottom:6px';
+--- draft at 2625-2645 ---
+		setFeedbackCursor('crosshair');
+		syncChromeClickThrough();
+		showPickBanner(kind);
+	}
+
+	function exitPick(result) {
+		if (!pickMode) return;
+		const { kind, sourceEl, sourceData, draft } = pickMode;
+		pickMode = null;
+		setFeedbackCursor('');
+		syncChromeClickThrough();
+		hidePickBanner();
+		hideOutline();
+		if (kind === 'member') {
+			if (result) draft.members = [...(draft.members || [sourceEl]), result];
+			showPopover(sourceEl, sourceData, draft);
+			if (result) showToast('Added to selection');
+		} else {
+			showPopover(sourceEl, sourceData, { ...draft, destination: result || draft.destination });
+			if (result) showToast('Destination set');
+		}
+	}
+
+	let pickBannerEl = null;
+
+	function showPickBanner(kind) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1995,2020p' /tmp/rf_head.js
+let comment = ta.value.trim();
+			if (Object.keys(adjustedStyles).length) {
+				comment = comment ? comment + '\n\n' + Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n')
+					: Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n');
+			}
+			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+			const annotationData = buildAnnotationData(comment);
+			persist(() => {
+				// Replace by identity, not raw index: the panel can delete other
+				// rows while this popover is open, shifting indices. If the
+				// original record is gone, append instead of overwriting a
+				// stranger that slid into its slot.
+				const ref = initial?.editRef;
+				const at = ref ? annotations.indexOf(ref) : -1;
+				if (at >= 0) annotations[at] = makeAnnotation(annotationData);
+				else if (Number.isInteger(initial?.editIndex) && !ref && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
+				else annotations.push(makeAnnotation(annotationData));
+			});
+			keepStyles();
+			hidePopover();
+			showToast('Saved');
+		}
+
+		const actions = document.createElement('div');
+		actions.className = 'rf-actions';
+		const cancelBtn = document.createElement('button');
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '25,40p' /tmp/rf_head.js
+// @match        *://*/*
+// @grant        none
+// @homepageURL  https://github.com/JavaGT/rapid-feedback
+// @supportURL   https://github.com/JavaGT/rapid-feedback/issues
+// @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+// ==/UserScript==
+
+(function () {
+	'use strict';
+	const IS_TOP_FRAME = window.parent === window;
+	// A top-level instance can bridge same-origin frames that do not run the
+	// userscript themselves. Instances that do run in a frame mark it so the top
+	// instance does not install a second set of handlers there.
+	if (!IS_TOP_FRAME) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo '=== guards prev count ===' && grep -c 'catch' /tmp/rf_prev.js && echo '=== guards head count ===' && grep -c 'catch' /tmp/rf_head.js && echo '=== diff of try/catch lines ===' && diff <(grep -n 'catch' /tmp/rf_prev.js | sed 's/^[0-9]*://') <(grep -n 'catch' /tmp/rf_head.js | sed 's/^[0-9]*://') ; echo '=== all try lines head ===' && grep -n 'try {' /tmp/rf_head.js
+=== guards prev count ===
+29
+=== guards head count ===
+28
+=== diff of try/catch lines ===
+26d25
+< 			try { initial.editRef = annotations[initial.editIndex]; } catch {}
+=== all try lines head ===
+42:		try { bridged = !!document.__RF_BRIDGED_BY_TOP__; } catch {}
+44:		try {
+46:		} catch { try { window.__SCOPE_FEEDBACK_FRAME_INSTANCE__ = true; } catch {} }
+85:		try { path = typeof e.composedPath === 'function' ? e.composedPath() : null; } catch { path = null; }
+91:			try { if (n.isContentEditable) return n; } catch {}
+192:		try {
+217:		try { Object.defineProperty(doc, '__RF_BRIDGED_BY_TOP__', { value: true, configurable: false }); } catch {}
+248:			try {
+351:		try {
+364:		try {
+485:		try {
+505:		try {
+552:		try {
+573:		try { parent = meta?.parent || null; } catch {}
+577:			try { parent = parent.parent || null; } catch { parent = null; }
+779:		try { const u = new URL(url); return u.pathname + u.search; } catch { return url || ''; }
+813:			try { frame = ownerDoc.querySelector(frameRef.selector); } catch { return null; }
+815:			try { ownerDoc = frame.contentDocument; } catch { return null; }
+824:		try { return ownerDoc?.querySelector(ref.selector) || null; } catch { return null; }
+1044:		try { document.execCommand('copy'); showToast('Copied'); } catch { showToast('Failed'); }
+1057:		try {
+1071:		try {
+1087:		try {
+1096:		try {
+1301:		return annotations.some(a => { try { return new URL(a.url).origin === origin; } catch { return false; } });
+3056:				try { dirty = !!(popoverEl && popoverDraftGuard && popoverDraftGuard()); } catch { dirty = false; }
+3061:				if (dirty) { try { editable.blur(); } catch {} return; }
+> deepseek-v4.1-flash · deepseek-flash
+Let me check whether `editRef`/`editIndex` leak into the persisted localStorage shape, and verify the delete-commit's references.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1838,1860p' /tmp/rf_head.js
+destBtn.textContent = 'Pick destination';
+		});
+		// Everything the popover would lose by closing for a pick mode. Reopening
+		// against the zoomed element means retargeting isn't lost either.
+		function currentDraft() {
+			return {
+				comment: ta.value,
+				category: selCat,
+				adjustedStyles: { ...adjustedStyles },
+				styleRestore: pendingStyleRestore(),
+				destination: destData,
+				members: [...members],
+				missingMembers: [...missingMembers],
+				editIndex: initial?.editIndex,
+				editRef: initial?.editRef || null,
+			};
+		}
+
+		destBtn.addEventListener('click', () => {
+			revertStyles();
+			enterPick('destination', zoomTarget, curData, currentDraft());
+		});
+		destRow.appendChild(destBtn);
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo '=== oxalpha refs in code/tests ===' && grep -rn 'oxalpha' rapid-feedback.user.js test/ 2>/dev/null; echo "rc=$?"; echo '=== README refs ===' && grep -n 'oxalpha' README.md 2>/dev/null; echo "rc=$?"
+=== oxalpha refs in code/tests ===
+rc=1
+=== README refs ===
+rc=1
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n 'function buildAnnotationData' /tmp/rf_head.js && sed -n "$(grep -n 'function buildAnnotationData' /tmp/rf_head.js | cut -d: -f1),+14p" /tmp/rf_head.js
+1982:		function buildAnnotationData(comment) {
+		function buildAnnotationData(comment) {
+			return {
+				...curData,
+				comment,
+				category: selCat,
+				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
+				styleRestore: pendingStyleRestore(),
+				destination: destData,
+				targets: memberRefs(),
+			};
+		}
+
+		function submit() {
+			let comment = ta.value.trim();
+			if (Object.keys(adjustedStyles).length) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo '=== history retains ===' && git log --oneline -- oxalpha-redesign/ | head -5 && echo '=== tree at parent ===' && git ls-tree -r --name-only 460a0dc^ oxalpha-redesign/ && echo '=== scratch comparison tracked ===' && git ls-files .scratch | grep -i comparison
+=== history retains ===
+460a0dc Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+85790a7 Add OX Alpha independent rebuild and four-way comparison
+=== tree at parent ===
+oxalpha-redesign/DESIGN.md
+oxalpha-redesign/rapid-feedback.user.js
+=== scratch comparison tracked ===
+.scratch/comparison-deepseek.md
+.scratch/comparison-oxalpha.md
+.scratch/comparison.md
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n 'curData' /tmp/rf_head.js | head && echo '--- suite log tail ---' && ls -la artifacts/wave-2026-09-16/ && tail -30 artifacts/wave-2026-09-16/suite-full.log
+1471:		// curData tracks whichever element the popover currently describes, so the
+1473:		let curData = data;
+1502:				? targetLabel({ ...curData, comment: '' }) + ' +' + (members.length - 1)
+1503:				: targetLabel({ ...curData, comment: '' });
+1504:			if (curData.source?.ref) {
+1506:				const trail = componentTrail(curData.source, true);
+1507:				sourceEl.textContent = '◈ ' + (trail || curData.source.ref) + (curData.source.viaAncestor ? ' (ancestor)' : '');
+1508:				sourceEl.title = curData.source.ref + (trail ? ' | ' + trail : '');
+1509:			} else if (curData.source?.status === 'svelte-production-build') {
+1517:			selEl.textContent = compactAncestorChain(curData.selector) || curData.selector;
+--- suite log tail ---
+total 344
+drwxr-xr-x@ 5 server  staff     160 Sep 16 07:48 .
+drwxr-xr-x@ 8 server  staff     256 Sep 16 07:45 ..
+-rw-r--r--@ 1 server  staff   26940 Sep 16 07:49 review-40-11.stdout.log
+-rw-r--r--@ 1 server  staff  109366 Sep 16 07:48 review-landed.stdout.log
+-rw-r--r--@ 1 server  staff    6873 Sep 16 07:48 suite-full.log
+PASS  armed Clear label appears
+PASS  second Clear click wipes
+PASS  ambiguity warning in markdown
+PASS  replaceState with same URL keeps the draft open
+PASS  chord-click on tool chrome does not annotate <html>
+PASS  wiping every selected element dims the popover to the lost state
+PASS  chord-add revives a lost draft with Submit available
+PASS  first click after an empty chord reaches the FAB
+PASS  holding the chord past the gesture window keeps the selection
+PASS  popover renders inside the viewport on a tall page
+
+23/23 checks passed
+PASS  same-origin iframe opens the child popover
+PASS  iframe pick targets the inner element
+PASS  iframe pick captures child text
+PASS  iframe path is persisted for reopening
+PASS  iframe style preview is applied
+PASS  iframe style restore resolves through the frame path
+PASS  markdown identifies the containing iframe
+PASS  iframe popover is positioned in the top viewport
+
+8/8 checks passed
+PASS  Submit stays available after target removal
+PASS  removed target draft can be submitted
+
+2/2 checks passed
+
+8/8 suites passed
+npm test > ../artifacts/wave-2026-09-16/suite-full.log 2>&1  8.90s user 5.47s system 60% cpu 23.604 total
+rc=0
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git rev-parse HEAD && git branch --show-current && echo '--- issue 11/40 ---' && gh issue view 11 -R JavaGT/rapid-feedback --json number,title,state,body -q '{n:.number,t:.title,s:.state,b:.body}' 2>&1 | head -40
+460a0dc830b7eade5bd0c974b9b98b35d4acde58
+main
+--- issue 11/40 ---
+{"b":"## Proposed deletion\n`oxalpha-redesign/` — 1,537-line `rapid-feedback.user.js` + 114-line `DESIGN.md`. One-shot blind-rebuild experiment from 2026-08-21 (commit 85790a7, \"Add OX Alpha independent rebuild and four-way comparison\").\n\n## GOES / STAYS / BREAKS\n- **GOES:** the whole folder. The comparison is complete and committed (`.scratch/comparison-oxalpha.md`), which records the build as \"verified working\" in headless Chrome but superseded — its purpose (independent architecture comparison) is delivered, and no product vision forwards it as a replacement.\n- **STAYS:** `.scratch/comparison-oxalpha.md`, and the untracked in-flight lane docs (`.scratch/oxalpha-blind-plan.md`, `.scratch/blind-plan-vs-existing.md`) which belong to another agent's session.\n- **BREAKS:** nothing in code or tests. `rg -l \"oxalpha-redesign\"` → only the folder and the historical comparison doc. The in-flight blind-plan lane works from plan documents, not this folder (verified: no reference from the untracked `.scratch/*.md` plan files to the folder) — **but sequence this deletion after that lane closes** so its checkout stays quiet. Git history retains everything.\n\n## Evidence\n- Last commit touching the folder: 85790a7, 2026-08-21; untouched since.\n- `git ls-files | rg redesign` → 6 files, all in the three redesign folders.\n\n## Acceptance criterion (\"nothing broke\")\nAt the committed baseline (HEAD green per issue #1): `node test/run-all.js` all 8 suites pass; `rg -l \"oxalpha-redesign\" --glob '!**/node_modules/**'` returns only the historical comparison docs; no untracked lane files were touched.\n\n## Decision question\nAdopt (execute deletion once the blind-plan lane closes), Adapt, or Reject?\n\n*Report: `.scratch/forced-subtraction-2026-09-10.md` (forced-subtraction wave).*","n":11,"s":"OPEN","t":"[wave 2026-09-10] Delete oxalpha-redesign/ (1,651-line blind-rebuild experiment; sequence after in-flight blind-plan lane closes)"}
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo '=== rg oxalpha-redesign ===' && rg -l 'oxalpha-redesign' --glob '!**/node_modules/**' --hidden 2>/dev/null; echo '=== branches/worktrees ===' && git branch -a && git worktree list
+=== rg oxalpha-redesign ===
+AGENTS.md
+.git/COMMIT_EDITMSG
+artifacts/automation-receipts/2026-09-16/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md
+artifacts/automation-receipts/2026-09-15/rapid-feedback-0730-attempt-1-rapid-feedback-0730.md
+.git/logs/refs/heads/main
+.scratch/comparison-oxalpha.md
+.scratch/quick-scan-2026-09-10.md
+artifacts/wave-2026-09-15/quick-scan.md
+.git/logs/HEAD
+.scratch/abstraction-zoom-2026-09-10.md
+artifacts/wave-2026-09-12/forced-subtraction.md
+artifacts/wave-2026-09-13/forced-subtraction.md
+artifacts/wave-2026-09-16/review-40-11.stdout.log
+artifacts/wave-2026-09-16/review-landed.stdout.log
+.scratch/forced-subtraction-2026-09-10.md
+artifacts/wave-2026-09-11/forced-subtraction.md
+artifacts/wave-2026-09-13/abstraction-zoom.md
+artifacts/wave-2026-09-13/hostile-review-39.md
+artifacts/wave-2026-09-11/abstraction-zoom.md
+=== branches/worktrees ===
+* main
+  wave-2026-09-10
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main
+/Users/server/Development/rapid-feedback  460a0dc [main]
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh issue view 40 -R JavaGT/rapid-feedback --json number,title,state,body -q '{n:.number,t:.title,s:.state,b:.body}' 2>&1 | head -40
+{"b":"Wave 2026-09-15 0730 quick-scan + abstraction-zoom over `270fca0` (v5.18 lane, the only delta since the 09-13 scan baseline). **Evaluate** these small cleanups; implementation NOT the todo until claimed.\n\n1. **resetPopoverPosition mixes geometry policy into a state-reset brick** (rapid-feedback.user.js:1352 at HEAD, added by 270fca0): the off-screen fallback rect `{ top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), ... }` is hand-rolled inline — margin/centering policy that belongs beside placePopover's positioning rules (compare :1356-1362 gap/pad). If placePopover ever changes viewport-edge policy, this literal drifts. Suggested zoom: named `centeredFallbackRect()` or a placePopover mode.\n\n2. **No-op try/catch around a plain assignment** (rapid-feedback.user.js:1441 at HEAD, added by 270fca0): `try { initial.editRef = annotations[initial.editIndex]; } catch {}` — property assignment on a plain object cannot throw; the wrapper is dead armor. Contrast :91/:96 where try/catch guards *platform accessors* (composedPath/isContentEditable) that can throw on exotic nodes. Delete or justify.\n\nBoth LOW severity, MEDIUM-LOW leverage; batch in one commit if adopted. Fresh-code findings only — the rest of the 270fca0 diff (eventFromEditable, popoverDraftGuard, edit-by-identity submit) zoomed clean. Report: artifacts/wave-2026-09-15/quick-scan.md","n":40,"s":"OPEN","t":"[wave 2026-09-15] v5.18 follow-ups: inline fallback-rect literals in resetPopoverPosition + no-op try/catch wrappers"}
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 270fca0:rapid-feedback.user.js > /tmp/rf_270.js 2>/dev/null && echo '--- 270fca0 lines 84-98 ---' && sed -n '84,98p' /tmp/rf_270.js && echo '--- 270fca0 fallback inline (grep) ---' && grep -n 'top: 80, bottom: 80' /tmp/rf_270.js && echo '--- 270fca0 editRef line ---' && grep -n 'initial.editRef = ' /tmp/rf_270.js
+--- 270fca0 lines 84-98 ---
+		let path = null;
+		try { path = typeof e.composedPath === 'function' ? e.composedPath() : null; } catch { path = null; }
+		const nodes = Array.isArray(path) && path.length ? path : [e.target];
+		for (const n of nodes) {
+			if (!n || n.nodeType !== 1) continue;
+			const tag = n.tagName;
+			if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return n;
+			try { if (n.isContentEditable) return n; } catch {}
+		}
+		return null;
+	}
+
+	const CATEGORIES = [
+		{ id: 'general', label: 'General' },
+		{ id: 'bug', label: 'Bug' },
+--- 270fca0 fallback inline (grep) ---
+1349:			const rect = el?.isConnected ? getViewportRect(el) : { top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), right: Math.max(8, (innerWidth + POPOVER_W) / 2) };
+--- 270fca0 editRef line ---
+1440:			try { initial.editRef = annotations[initial.editIndex]; } catch {}
+> deepseek-v4.1-flash · deepseek-flash
+All evidence gathered. Writing the report now.
+[0m← [0mWrite artifacts/wave-2026-09-16/review-40-11.md
+Created file successfully: artifacts/wave-2026-09-16/review-40-11.md
+> deepseek-v4.1-flash · deepseek-flash
+Report written.
+
+**Receipt (read-only; nothing staged/committed):**
+
+**922d147 (#40): APPROVED** — `centeredFallbackRect()` with `pad=8` is byte-equivalent to the old inline literal; the removed try/catch guarded an array read + assignment on internal object literals, cannot throw; platform guards at `:85/:91/:1301` stay; no change to placement, edit-target pinning, or localStorage shape.
+**460a0dc (#11): MINOR** — clean deletion, git history + `.scratch` comparisons survive, zero code/test refs; but `AGENTS.md:7` still names the deleted `oxalpha-redesign/`, so #11's own acceptance is unmet until that line is fixed.
+
+Report: `artifacts/wave-2026-09-16/review-40-11.md`

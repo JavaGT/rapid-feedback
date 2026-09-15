@@ -1,0 +1,19 @@
+# commit 1 data-loss probe — seed = v5.13's bare array under scope_feedback_annotations, then one real Submit via the UI
+# pre-commit build (a0f4d02~1):
+
+=== PRE-a0f4d02 (compat branch present) ===
+loaded count after seeding bare array : 2
+storage after load                     : { shape: 'envelope', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 3
+storage after save                     : { shape: 'envelope', n: 3 }
+PRE-ENVELOPE A survives?               : true
+# HEAD (a0f4d02 applied):
+
+=== HEAD (a0f4d02 applied) ===
+loaded count after seeding bare array : 0
+storage after load                     : { shape: 'bare-array', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 1
+storage after save                     : { shape: 'envelope', n: 1 }
+PRE-ENVELOPE A survives?               : false

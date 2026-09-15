@@ -1,0 +1,2189 @@
+[0m
+> deepseek-v4.1-flash · deepseek-flash
+I'll start by reading the commits and the current state of the affected files.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git status --short | head -30
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+?? .scratch/quick-scan-2026-09-10.md
+?? artifacts/automation-receipts/2026-09-16/
+?? artifacts/wave-2026-09-16/
+?? test/repro-h1.js
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline -5 && echo "---STAT a0f4d02---" && git show --stat a0f4d02 && echo "---STAT 7eed262---" && git show --stat 7eed262
+617ba18 Wave 2026-09-15 artifacts: quick-scan report, suite logs, automation receipt (#29/#13/#35 landed, #40 filed)
+fbd4e1e AGENTS.md: refresh stale dirty-path note (v5.18 landed 270fca0); add rg --hidden convention
+7eed262 Harness: waitFor bounded-polling predicates replace run.js settle-sleeps (#35 slice)
+a0f4d02 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+270fca0 Land v5.18 lane + draft safety: offscreen recovery, dirty-aware Escape, edit-by-identity (#32, #38)
+---STAT a0f4d02---
+commit a0f4d02d83d7ffab1c600aac1fbaa9936ddc6c71
+Author: JavaGT <java@javagrant.com>
+Date:   Tue Sep 15 07:41:33 2026 +1200
+
+    Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+    
+    - load() now reads only the current versioned envelope; ~14 LOC of
+      compatibility paths deleted per the #29 batch (extends #13).
+    - componentStack deletion item REJECTED: stale claim, :753 reads
+      source.componentStack (writer :640 is load-bearing).
+    - Unpredicted break caught by the suite (hidden coupling finding):
+      run5 'annotation from another page loads' seeded a bare array — an
+      implicit legacy-format assertion. Seed updated to the envelope the
+      tool actually writes; test intent (cross-page persistence) unchanged.
+    - Focused check: full suite 8/8 green (artifacts/wave-2026-09-15/suite-29-fix.log).
+    - Hostile review deferred to next wave (route policy stale this run).
+
+ rapid-feedback.user.js | 16 +++-------------
+ test/run5.js           |  4 ++--
+ 2 files changed, 5 insertions(+), 15 deletions(-)
+---STAT 7eed262---
+commit 7eed2625cadb145d3acd169ceb017f34c9193a9c
+Author: JavaGT <java@javagrant.com>
+Date:   Tue Sep 15 07:45:43 2026 +1200
+
+    Harness: waitFor bounded-polling predicates replace run.js settle-sleeps (#35 slice)
+    
+    - common.js: waitFor(page, pageExpr, {timeoutMs, intervalMs, description})
+      polls every 25ms (2s default) and throws a named timeout carrying the
+      last value; waitForPopover / waitForPopoverGone predicates on top.
+    - run.js: 15 mechanical settle-sleeps converted (chord-click -> popover
+      open; submit -> popover closed). Sleeps kept where a following check's
+      failure semantics depend on them (:55/:72 re-renders, :79 banner-#31,
+      :86/:198 same-condition checks, :211/:278/:282 Escape + fail-soft).
+    - Coverage-neutral by design; full suite 8/8 green
+      (artifacts/wave-2026-09-15/suite-35.log). F4/F5 slices remain on #35.
+
+ test/common.js | 19 ++++++++++++++++++-
+ test/run.js    | 30 +++++++++++++++---------------
+ 2 files changed, 33 insertions(+), 16 deletions(-)
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 7eed262
+commit 7eed2625cadb145d3acd169ceb017f34c9193a9c
+Author: JavaGT <java@javagrant.com>
+Date:   Tue Sep 15 07:45:43 2026 +1200
+
+    Harness: waitFor bounded-polling predicates replace run.js settle-sleeps (#35 slice)
+    
+    - common.js: waitFor(page, pageExpr, {timeoutMs, intervalMs, description})
+      polls every 25ms (2s default) and throws a named timeout carrying the
+      last value; waitForPopover / waitForPopoverGone predicates on top.
+    - run.js: 15 mechanical settle-sleeps converted (chord-click -> popover
+      open; submit -> popover closed). Sleeps kept where a following check's
+      failure semantics depend on them (:55/:72 re-renders, :79 banner-#31,
+      :86/:198 same-condition checks, :211/:278/:282 Escape + fail-soft).
+    - Coverage-neutral by design; full suite 8/8 green
+      (artifacts/wave-2026-09-15/suite-35.log). F4/F5 slices remain on #35.
+
+diff --git a/test/common.js b/test/common.js
+index c34c122..c3bf457 100644
+--- a/test/common.js
++++ b/test/common.js
+@@ -51,4 +51,21 @@ async function withPage(run) {
+ 	}
+ }
+ 
+-module.exports = { POP, MARKERS, createReporter, withPage };
++// Bounded polling replaces guessed sleeps: evaluate `pageExpr` in the page
++// until truthy. A timeout throws with the description and last value so a
++// stall diagnoses itself instead of silently passing after a fixed nap.
++const delay = (ms) => new Promise(r => setTimeout(r, ms));
++async function waitFor(page, pageExpr, { timeoutMs = 2000, intervalMs = 25, description } = {}) {
++	const deadline = Date.now() + timeoutMs;
++	let last;
++	while (Date.now() < deadline) {
++		last = await page.evaluate(`(() => ${pageExpr})()`);
++		if (last) return last;
++		await delay(intervalMs);
++	}
++	throw new Error('waitFor timeout after ' + timeoutMs + 'ms: ' + (description || pageExpr.slice(0, 80)) + ' (last=' + JSON.stringify(last) + ')');
++}
++const waitForPopover = (page, opts) => waitFor(page, `!!(${POP})`, { description: 'popover open', ...opts });
++const waitForPopoverGone = (page, opts) => waitFor(page, `!(${POP})`, { description: 'popover closed', ...opts });
++
++module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
+diff --git a/test/run.js b/test/run.js
+index 4c55279..54fb291 100644
+--- a/test/run.js
++++ b/test/run.js
+@@ -1,4 +1,4 @@
+-const { POP, MARKERS, createReporter, withPage } = require('./common');
++const { POP, MARKERS, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
+ 
+ module.exports = async function run() {
+ 	const { check, finish } = createReporter();
+@@ -14,7 +14,7 @@ module.exports = async function run() {
+   check('markers appear while accumulating', markersDuring === 3, 'got ' + markersDuring);
+   await page.keyboard.up('Meta');
+   await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopover(page);
+ 
+   let state = await page.evaluate(`(() => {
+     const p = ${POP}; if (!p) return { err: 'no popover' };
+@@ -99,7 +99,7 @@ module.exports = async function run() {
+     ta.value = 'Align these cards';
+     p.querySelector('.rf-btn-primary').click();
+   })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+ 
+   const out = await page.evaluate(() => {
+     const api = window.__SCOPE_FEEDBACK_API__;
+@@ -124,14 +124,14 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await chordClick('#c5');
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => {
+     const p = ${POP};
+     const ta = p.querySelector('.rf-popover-ta');
+     ta.value = 'utility check';
+     p.querySelector('.rf-btn-primary').click();
+   })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const utilSel = await page.evaluate(() => {
+     const a = window.__SCOPE_FEEDBACK_API__.annotations;
+     return a[a.length - 1].selector;
+@@ -156,12 +156,12 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await chordClick('#c1');
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => { const p = ${POP};
+     p.querySelector('.rf-popover-ta').value = 'svelte check';
+     p.querySelector('.rf-btn-primary').click();
+   })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const sv = await page.evaluate(() => {
+     const api = window.__SCOPE_FEEDBACK_API__;
+     const a = api.annotations[api.annotations.length - 1];
+@@ -191,7 +191,7 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await chordClick('#c1');
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => { const p = ${POP};
+     [...p.querySelectorAll('.rf-btn-sm')].find(b => /similar/i.test(b.textContent)).click();
+   })()`);
+@@ -199,7 +199,7 @@ module.exports = async function run() {
+   const simRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
+   check('select similar groups by component file', simRows === 2, 'rows=' + simRows + ' (signature fallback would sweep all cards)');
+   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'nested group check'; p.querySelector('.rf-btn-primary').click(); })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const groupContext = await page.evaluate(() => {
+     const api = window.__SCOPE_FEEDBACK_API__;
+     const a = api.annotations[api.annotations.length - 1];
+@@ -233,9 +233,9 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await page.mouse.click(shadowPoint.x, shadowPoint.y);
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'shadow context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const shadowSource = await page.evaluate(() => {
+     const api = window.__SCOPE_FEEDBACK_API__;
+     return api.annotations[api.annotations.length - 1].source;
+@@ -256,9 +256,9 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await chordClick('#c4');
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'accessibility context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const a11yContext = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.at(-1).a11y);
+   check('accessibility context includes descriptions and states',
+     a11yContext?.description === 'Opens the project details' && a11yContext.states?.expanded === 'true',
+@@ -289,12 +289,12 @@ module.exports = async function run() {
+   await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   await chordClick('#c4');
+   await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+-  await new Promise(r => setTimeout(r, 250));
++  await waitForPopover(page);
+   await page.evaluate(`(() => { const p = ${POP};
+     p.querySelector('.rf-popover-ta').value = 'disclosure check';
+     p.querySelector('.rf-btn-primary').click();
+   })()`);
+-  await new Promise(r => setTimeout(r, 200));
++  await waitForPopoverGone(page);
+   const disc = await page.evaluate(() => {
+     const api = window.__SCOPE_FEEDBACK_API__;
+     const a = api.annotations[api.annotations.length - 1];
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show a0f4d02
+commit a0f4d02d83d7ffab1c600aac1fbaa9936ddc6c71
+Author: JavaGT <java@javagrant.com>
+Date:   Tue Sep 15 07:41:33 2026 +1200
+
+    Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+    
+    - load() now reads only the current versioned envelope; ~14 LOC of
+      compatibility paths deleted per the #29 batch (extends #13).
+    - componentStack deletion item REJECTED: stale claim, :753 reads
+      source.componentStack (writer :640 is load-bearing).
+    - Unpredicted break caught by the suite (hidden coupling finding):
+      run5 'annotation from another page loads' seeded a bare array — an
+      implicit legacy-format assertion. Seed updated to the envelope the
+      tool actually writes; test intent (cross-page persistence) unchanged.
+    - Focused check: full suite 8/8 green (artifacts/wave-2026-09-15/suite-29-fix.log).
+    - Hostile review deferred to next wave (route policy stale this run).
+
+diff --git a/rapid-feedback.user.js b/rapid-feedback.user.js
+index c4c9639..e94ed99 100644
+--- a/rapid-feedback.user.js
++++ b/rapid-feedback.user.js
+@@ -1055,23 +1055,13 @@
+ 
+ 	function load() {
+ 		try {
+-			let data = localStorage.getItem(STORAGE_KEY);
+-			if (!data) {
+-				data = localStorage.getItem('rapid_feedback_annotations');
+-				if (data) localStorage.setItem(STORAGE_KEY, data);
+-			}
++			const data = localStorage.getItem(STORAGE_KEY);
+ 			if (!data) return;
+ 			const parsed = JSON.parse(data);
+ 			// One corrupt row shouldn't take the whole history down with it: keep the
+ 			// well-formed objects and let makeAnnotation fill in any missing fields.
+-			let rows;
+-			if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)
+-			else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.annotations)) rows = parsed.annotations;
+-			if (Array.isArray(rows)) {
+-				annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+-				// Re-emit in the current envelope so the old shape doesn't linger.
+-				save();
+-			}
++			const rows = parsed && typeof parsed === 'object' ? parsed.annotations : null;
++			if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+ 		} catch {}
+ 	}
+ 
+diff --git a/test/run5.js b/test/run5.js
+index 051f698..6a5dd64 100644
+--- a/test/run5.js
++++ b/test/run5.js
+@@ -90,10 +90,10 @@ module.exports = async function run() {
+ 		// --- A comment stays editable from a different page ---
+ 		await page.evaluate(() => {
+ 			window.__SCOPE_FEEDBACK_API__.clear();
+-			localStorage.setItem('scope_feedback_annotations', JSON.stringify([{
++			localStorage.setItem('scope_feedback_annotations', JSON.stringify({ version: 1, annotations: [{
+ 				selector: 'div#c1.card', tag: 'div', text: 'First card', url: 'https://example.com/other',
+ 				comment: 'from another page', category: 'general'
+-			}]));
++			}] }));
+ 		});
+ 		await page.reload();
+ 		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -rn "rapid_feedback_annotations\|scope_feedback_annotations\|STORAGE_KEY\|localStorage" --include=*.js test/ | head -60
+zsh:1: no matches found: --include=*.js
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:rapid-feedback.user.js > /tmp/rf-HEAD.js 2>/dev/null; grep -n "STORAGE_KEY\|rapid_feedback_annotations\|scope_feedback_annotations\|localStorage\|function save\|function load\|function makeAnnotation\|version: 1\|annotations:" /tmp/rf-HEAD.js
+127:	const STORAGE_KEY = 'scope_feedback_annotations';
+864:	function makeAnnotation(data) {
+1056:	function load() {
+1058:			const data = localStorage.getItem(STORAGE_KEY);
+1070:	function save() {
+1072:			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+1086:	function loadPopoverOffset() {
+1088:			const raw = localStorage.getItem(POPOVER_OFFSET_KEY);
+1095:	function savePopoverOffset() {
+1097:			if (popoverOffset) localStorage.setItem(POPOVER_OFFSET_KEY, JSON.stringify(popoverOffset));
+1098:			else localStorage.removeItem(POPOVER_OFFSET_KEY);
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1040,1110p' /tmp/rf-HEAD.js
+ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+		ta.setAttribute('readonly', '');
+		document.body.appendChild(ta);
+		ta.select();
+		try { document.execCommand('copy'); showToast('Copied'); } catch { showToast('Failed'); }
+		document.body.removeChild(ta);
+	}
+
+	function copyText(text) {
+		if (navigator.clipboard?.writeText) {
+			navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => fallbackCopy(text));
+			return;
+		}
+		fallbackCopy(text);
+	}
+
+	function load() {
+		try {
+			const data = localStorage.getItem(STORAGE_KEY);
+			if (!data) return;
+			const parsed = JSON.parse(data);
+			// One corrupt row shouldn't take the whole history down with it: keep the
+			// well-formed objects and let makeAnnotation fill in any missing fields.
+			const rows = parsed && typeof parsed === 'object' ? parsed.annotations : null;
+			if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+		} catch {}
+	}
+
+	// Versioned envelope: a future format change can migrate instead of guessing.
+	// Quota failures surface as a toast — silently losing a save would be worse.
+	function save() {
+		try {
+			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+		} catch {
+			showToast('Could not save — storage full');
+		}
+	}
+
+	function persist(fn) {
+		fn();
+		save();
+		if (panelRoot) renderPanel();
+	}
+
+	// The dragged popover position persists per origin so a reviewer who parks it
+	// out of the way keeps that spot across reloads. Reset by Cancel/Esc.
+	function loadPopoverOffset() {
+		try {
+			const raw = localStorage.getItem(POPOVER_OFFSET_KEY);
+			if (!raw) return;
+			const p = JSON.parse(raw);
+			if (p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y)) popoverOffset = { x: p.x, y: p.y };
+		} catch {}
+	}
+
+	function savePopoverOffset() {
+		try {
+			if (popoverOffset) localStorage.setItem(POPOVER_OFFSET_KEY, JSON.stringify(popoverOffset));
+			else localStorage.removeItem(POPOVER_OFFSET_KEY);
+		} catch {}
+	}
+
+	// --- Shadow DOM helpers ---
+	function createShadowRoot() {
+		const host = document.createElement('div');
+		host.style.cssText = `all:initial;position:fixed;z-index:${Z.outline};pointer-events:none`;
+		// Every piece of our own chrome carries this marker, so isRfChrome can reject
+		// it by inspection rather than by keeping a list of hosts in sync.
+		host.setAttribute(RF_CHROME_ATTR, '');
+		// Closed roots keep page scripts from reaching into the feedback UI — panel
+		// comments are none of the host page's business. Everything that needs the
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n "rapid_feedback_annotations|scope_feedback_annotations|STORAGE_KEY|localStorage" test/ -g '*.js' | head -60
+test/run6.js:56:		check('drag persists offset', await page.evaluate(() => !!localStorage.getItem('rf_popover_offset_v1')));
+test/run6.js:80:		check('Esc clears the saved offset', await page.evaluate(() => !localStorage.getItem('rf_popover_offset_v1')));
+test/run6.js:81:		await page.evaluate(() => { localStorage.clear(); window.__SCOPE_FEEDBACK_API__.clear(); });
+test/run6.js:98:			JSON.parse(localStorage.getItem('scope_feedback_annotations'))?.annotations?.[0]?.styleRestore !== undefined));
+test/run6.js:113:		await page.evaluate(() => { localStorage.clear(); window.__SCOPE_FEEDBACK_API__.clear(); });
+test/run4.js:41:		await page.evaluate(() => localStorage.clear());
+test/run5.js:93:			localStorage.setItem('scope_feedback_annotations', JSON.stringify({ version: 1, annotations: [{
+test/run.js:106:    const parsed = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '85,120p' test/run.js && echo "=== run5 80-110 ===" && sed -n '80,112p' test/run5.js
+await chordClick('#c4');
+  await new Promise(r => setTimeout(r, 200));
+  state = await page.evaluate(`(() => { const p = ${POP}; if (!p) return {err:'gone'}; return {
+    rows: [...p.querySelectorAll('.rf-sel-row')].map(r => r.querySelector('.rf-sel-name').textContent),
+    comment: p.querySelector('.rf-popover-ta').value }; })()`);
+  check('added element joins the list', state.rows && state.rows.length === 3, JSON.stringify(state));
+  applied = await page.evaluate(() => document.getElementById('c4').style.cssText);
+  check('pending tweak carries onto the new member', applied.includes('40px'), applied);
+
+  // --- Submit and inspect the export ---
+  await page.evaluate(`(() => {
+    const p = ${POP};
+    p.querySelectorAll('.rf-tab-btn')[0].click();
+    const ta = p.querySelector('.rf-popover-ta');
+    ta.value = 'Align these cards';
+    p.querySelector('.rf-btn-primary').click();
+  })()`);
+  await waitForPopoverGone(page);
+
+  const out = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    const parsed = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
+    // Storage carries a version envelope since v5.14.
+    const rows = Array.isArray(parsed) ? parsed : parsed?.annotations;
+    return { raw: rows, apiKeys: api ? Object.keys(api) : null };
+  });
+  const ann = out.raw && out.raw[0];
+  check('annotation saved', !!ann, JSON.stringify(out).slice(0, 300));
+  check('saved annotation keeps 2 other members', ann && ann.targets && ann.targets.length === 2, JSON.stringify(ann && ann.targets));
+  check('member refs carry selector + text', ann && ann.targets.every(t => t.selector && t.text), JSON.stringify(ann && ann.targets));
+
+  const md = await page.evaluate(() => {
+    const api = window.__SCOPE_FEEDBACK_API__;
+    return api && api.markdown ? api.markdown() : null;
+  });
+  console.log('\n--- API keys: ' + JSON.stringify(out.apiKeys) + ' ---');
+=== run5 80-110 ===
+		await page.mouse.click(1100, 300);
+		await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+		await new Promise(r => setTimeout(r, 250));
+		state = await page.evaluate(`(() => { const p = ${POP}; return {
+			popover: !!p, sub: p?.querySelector('.rf-sub').textContent }; })()`);
+		check('chord-click on the panel never targets tool chrome',
+			!/rf-|rapid/i.test(state.sub || ''), JSON.stringify(state));
+		const after = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.length);
+		check('no annotation was created from tool chrome', after === before, before + ' -> ' + after);
+
+		// --- A comment stays editable from a different page ---
+		await page.evaluate(() => {
+			window.__SCOPE_FEEDBACK_API__.clear();
+			localStorage.setItem('scope_feedback_annotations', JSON.stringify({ version: 1, annotations: [{
+				selector: 'div#c1.card', tag: 'div', text: 'First card', url: 'https://example.com/other',
+				comment: 'from another page', category: 'general'
+			}] }));
+		});
+		await page.reload();
+		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
+		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
+		await new Promise(r => setTimeout(r, 200));
+		const loaded = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.length);
+		check('annotation from another page loads', loaded === 1, String(loaded));
+		await page.evaluate(`(() => { ${PANEL}.querySelector('.rf-btn-icon[data-idx="0"]').click(); })()`);
+		await new Promise(r => setTimeout(r, 200));
+		const editable = await page.evaluate(`(() => {
+			const cel = ${PANEL}.querySelector('.rf-card[data-idx="0"] .rf-comment');
+			return { editable: cel?.getAttribute('contenteditable'), popover: !!${POP} }; })()`);
+		check('editing an off-page annotation edits the comment in place, not the popover',
+			editable.editable === 'true' && !editable.popover, JSON.stringify(editable));
+		await page.evaluate(`(() => {
+			const cel = ${PANEL}.querySelector('.rf-card[data-idx="0"] .rf-comment');
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline -S"rapid_feedback_annotations" -- rapid-feedback.user.js | cat && echo "=== envelope ===" && git log --oneline -S"version: STORAGE_VERSION" -- rapid-feedback.user.js | cat && echo "=== STORAGE_VERSION def ===" && grep -n "STORAGE_VERSION" /tmp/rf-HEAD.js
+a0f4d02 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+2168518 v5.0: selector overhaul, chord-hold preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+28a602f Move rapid-feedback.user.js to userscripts/ collection
+2e09bfe Rename scope-feedback to rapid-feedback, bump to v4.1, fix gist URL
+=== envelope ===
+2afe902 v5.14: blind-plan improvements + draggable popover
+=== STORAGE_VERSION def ===
+128:	const STORAGE_VERSION = 1;
+1072:			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "=== v5.14 load() ===" && git show 2afe902:rapid-feedback.user.js | grep -n "STORAGE_KEY\|rapid_feedback_annotations\|function load\|Array.isArray(parsed)\|pre-envelope\|function save" | head -30
+=== v5.14 load() ===
+93:	const STORAGE_KEY = 'scope_feedback_annotations';
+665:	function load() {
+667:			let data = localStorage.getItem(STORAGE_KEY);
+669:				data = localStorage.getItem('rapid_feedback_annotations');
+670:				if (data) localStorage.setItem(STORAGE_KEY, data);
+677:			if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)
+689:	function save() {
+691:			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+705:	function loadPopoverOffset() {
+714:	function savePopoverOffset() {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline --all -- rapid-feedback.user.js | head -40
+a0f4d02 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+270fca0 Land v5.18 lane + draft safety: offscreen recovery, dirty-aware Escape, edit-by-identity (#32, #38)
+d6fd2df #4 #17 #18: guard directSvelteFile for {file}-without-{loc} meta; one captureElementSnapshot brick; one pushSourceBlock brick (fixes destination Open: drift) + run4 regression
+6a6ada0 Allow feedback submission after target removal
+1908c0c v5.17: tighten context exports
+4a82586 v5.17: enrich feedback context
+b96956e Support feedback picking inside same-origin iframes
+83cfbfd v5.15: fix popover never appearing on real pages + FAB unclickable while chord held
+2afe902 v5.14: blind-plan improvements + draggable popover
+daf6b0f v5.13: Svelte deep support — component header, route-aware refs, per-member sources, vscode links, component-grouped similar selection
+5178e4c v5.12: variant-aware class filter, unified pick-mode driver, chrome on documentElement
+1749d13 v5.11: skip generated ids in selectors, data-test/data-cy support, blue hover glow, numbered selection badges
+306fba1 v5.10: adopt redesign improvements — hardened selectors, closed shadow roots, resilient storage, green theme
+2109098 v5.9: a concealed FAB no longer swallows clicks
+7007ad6 v5.8: @namespace is javagrant.ac.nz
+d5dc1a6 v5.7: move canonical home from the gist to this repo
+578f595 v5.6: chrome gets out of the way, selections grow, comments always editable
+6c01bba Fix two Select similar defects from v5.5
+afc4442 v5.5 improve multi-select editing
+c66834d v5.4: multi-select becomes an editable selection
+977322d v5.3.1: bump version for component chain change
+b5370e8 component chain shows file names instead of full paths
+d492ec8 v5.3: fix live-style leakage, Reset, anchoring, zoom, grouping
+eadb8e1 v5.2: destination picking becomes a real selection mode
+6f71dba v5.1: zoom arrows show outline + reposition popover, hideOutline on popover close
+2168518 v5.0: selector overhaul, chord-hold preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+28a602f Move rapid-feedback.user.js to userscripts/ collection
+2e09bfe Rename scope-feedback to rapid-feedback, bump to v4.1, fix gist URL
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "=== v5.13 load/save ===" && git show daf6b0f:rapid-feedback.user.js | sed -n '/function load()/,/^	}/p' | head -20 && echo "--- v5.13 save ---" && git show daf6b0f:rapid-feedback.user.js | grep -n "STORAGE_KEY =\|localStorage.setItem(STORAGE_KEY" 
+=== v5.13 load/save ===
+	function load() {
+		try {
+			let data = localStorage.getItem(STORAGE_KEY);
+			if (!data) {
+				data = localStorage.getItem('rapid_feedback_annotations');
+				if (data) localStorage.setItem(STORAGE_KEY, data);
+			}
+			if (!data) return;
+			const parsed = JSON.parse(data);
+			// One corrupt row shouldn't take the whole history down with it: keep the
+			// well-formed objects and let makeAnnotation fill in any missing fields.
+			if (Array.isArray(parsed)) {
+				annotations = parsed.filter(a => a && typeof a === 'object').map(makeAnnotation);
+			}
+		} catch {}
+	}
+--- v5.13 save ---
+72:	const STORAGE_KEY = 'scope_feedback_annotations';
+620:				if (data) localStorage.setItem(STORAGE_KEY, data);
+633:		try { localStorage.setItem(STORAGE_KEY, JSON.stringify(annotations)); } catch {}
+[0m$ [0mcd /Users/server/Development/rapid-feedback && for c in 2e09bfe 28a602f 2168518; do echo "=== $c $(git log -1 --format=%s $c) ==="; git show $c:rapid-feedback.user.js 2>/dev/null | grep -n "STORAGE_KEY =\|rapid_feedback_annotations\|scope_feedback_annotations" | head -8; done
+=== 2e09bfe Rename scope-feedback to rapid-feedback, bump to v4.1, fix gist URL ===
+=== 28a602f Move rapid-feedback.user.js to userscripts/ collection ===
+=== 2168518 v5.0: selector overhaul, chord-hold preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity ===
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1,40p' /tmp/rf-HEAD.js
+// ==UserScript==
+// @name         Rapid Feedback
+// @namespace    javagrant.ac.nz
+// @version      5.18
+// @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
+// @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
+// @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
+// @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
+// @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, versioned storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
+// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+// @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
+// @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
+// @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
+// @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
+// @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
+// @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
+// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
+// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+// @note         v5.3.1: component chain shows file names instead of full paths
+// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
+// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+// @author       JavaGT
+// @match        *://*/*
+// @grant        none
+// @homepageURL  https://github.com/JavaGT/rapid-feedback
+// @supportURL   https://github.com/JavaGT/rapid-feedback/issues
+// @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+// ==/UserScript==
+
+(function () {
+	'use strict';
+	const IS_TOP_FRAME = window.parent === window;
+	// A top-level instance can bridge same-origin frames that do not run the
+	// userscript themselves. Instances that do run in a frame mark it so the top
+	// instance does not install a second set of handlers there.
+	if (!IS_TOP_FRAME) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --format='%h %s' --name-only -3 2e09bfe | head -20 && echo "=== files in 2e09bfe ===" && git ls-tree -r --name-only 2e09bfe | head -20
+2e09bfe Rename scope-feedback to rapid-feedback, bump to v4.1, fix gist URL
+
+README.md
+rapid-feedback.user.js
+scope-feedback.user.js
+23415b0 v3.3: cut button in popover (copy+close)
+
+scope-feedback.user.js
+f189ffd v3.2: token-efficient output format, separate JSON copy button
+
+scope-feedback.user.js
+=== files in 2e09bfe ===
+README.md
+rapid-feedback.user.js
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:test/common.js | cat -n
+1	const puppeteer = require('puppeteer-core');
+     2	const fs = require('fs');
+     3	const path = require('path');
+     4	
+     5	const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
+     6	const CHROME = process.env.RAPID_FEEDBACK_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+     7	const POP = `(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
+     8	// Selection markers live in a shadow root, so count them across all chrome roots.
+     9	const MARKERS = `(() => { let n = 0; for (const h of [...document.body.children, ...document.documentElement.children]) n += h.shadowRoot?.querySelectorAll('.rf-marker').length || 0; return n; })()`;
+    10	
+    11	function createReporter() {
+    12		const results = [];
+    13		return {
+    14			check(name, cond, detail) {
+    15				results.push({ name, ok: !!cond, detail });
+    16				console.log((cond ? 'PASS  ' : 'FAIL  ') + name + (detail && !cond ? '\n      ' + detail : ''));
+    17			},
+    18			finish() {
+    19				const fails = results.filter(r => !r.ok);
+    20				console.log('\n' + (results.length - fails.length) + '/' + results.length + ' checks passed');
+    21				return fails.length === 0;
+    22			}
+    23		};
+    24	}
+    25	
+    26	async function withPage(run) {
+    27		const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
+    28		try {
+    29			const page = await browser.newPage();
+    30			await page.setViewport({ width: 1200, height: 800 });
+    31			page.on('pageerror', e => console.log('PAGEERROR: ' + e.message));
+    32			page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE ERR: ' + m.text()); });
+    33			// The userscript closes its shadow roots so host pages can't reach into the
+    34			// feedback UI. Tests introspect that UI, so force roots open in the harness.
+    35			// Runs in every document (including navigations) before page scripts.
+    36			await page.evaluateOnNewDocument(() => {
+    37				const original = Element.prototype.attachShadow;
+    38				Element.prototype.attachShadow = function (init) {
+    39					return original.call(this, { ...init, mode: 'open' });
+    40				};
+    41			});
+    42			await page.goto('file://' + path.join(__dirname, 'page.html'));
+    43			await page.evaluate(SCRIPT);
+    44			const chordClick = async (sel) => {
+    45				const box = await page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    46				await page.mouse.click(box.x, box.y);
+    47			};
+    48			return await run(page, chordClick);
+    49		} finally {
+    50			await browser.close();
+    51		}
+    52	}
+    53	
+    54	// Bounded polling replaces guessed sleeps: evaluate `pageExpr` in the page
+    55	// until truthy. A timeout throws with the description and last value so a
+    56	// stall diagnoses itself instead of silently passing after a fixed nap.
+    57	const delay = (ms) => new Promise(r => setTimeout(r, ms));
+    58	async function waitFor(page, pageExpr, { timeoutMs = 2000, intervalMs = 25, description } = {}) {
+    59		const deadline = Date.now() + timeoutMs;
+    60		let last;
+    61		while (Date.now() < deadline) {
+    62			last = await page.evaluate(`(() => ${pageExpr})()`);
+    63			if (last) return last;
+    64			await delay(intervalMs);
+    65		}
+    66		throw new Error('waitFor timeout after ' + timeoutMs + 'ms: ' + (description || pageExpr.slice(0, 80)) + ' (last=' + JSON.stringify(last) + ')');
+    67	}
+    68	const waitForPopover = (page, opts) => waitFor(page, `!!(${POP})`, { description: 'popover open', ...opts });
+    69	const waitForPopoverGone = (page, opts) => waitFor(page, `!(${POP})`, { description: 'popover closed', ...opts });
+    70	
+    71	module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 7eed262 -- test/run.js | grep -c "^-.*setTimeout" ; echo "---file path check 2168518---"; git ls-tree -r --name-only 2168518 | head; echo "--- grep legacy in all tracked files ---"; rg -n "rapid_feedback_annotations" --hidden -g '!.git' . | head -20
+14
+---file path check 2168518---
+.scratch/rapid-feedback-v5/prototypes/live-styles-ux.html
+README.md
+rapid-feedback.user.js
+--- grep legacy in all tracked files ---
+./.scratch/forced-subtraction-2026-09-10.md:85:| GOES | **Legacy key migration**: lines 1056–1059 read pre-rename key `rapid_feedback_annotations` and copy it into `STORAGE_KEY`. Three lines, dormant since the v2-era rename. Evidence: only reference to that key name in the repo (rg: 1 hit). |
+./.scratch/existing-app-outline.md:63:- Migration (L615–630): on load, if the new key is empty it copies from legacy key `rapid_feedback_annotations` into the new key (L618–621). Parse failures are swallowed; non-array payloads ignored; each surviving entry must be an object and is normalized through `makeAnnotation` so missing fields get defaults and corrupt rows don't wipe the session (L626–628).
+./artifacts/wave-2026-09-16/review-landed.stdout.log:254:-				data = localStorage.getItem('rapid_feedback_annotations');
+./artifacts/wave-2026-09-16/review-landed.stdout.log:293:[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -rn "rapid_feedback_annotations\|scope_feedback_annotations\|STORAGE_KEY\|localStorage" --include=*.js test/ | head -60
+./artifacts/wave-2026-09-16/review-landed.stdout.log:295:[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:rapid-feedback.user.js > /tmp/rf-HEAD.js 2>/dev/null; grep -n "STORAGE_KEY\|rapid_feedback_annotations\|scope_feedback_annotations\|localStorage\|function save\|function load\|function makeAnnotation\|version: 1\|annotations:" /tmp/rf-HEAD.js
+./artifacts/wave-2026-09-16/review-landed.stdout.log:380:[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n "rapid_feedback_annotations|scope_feedback_annotations|STORAGE_KEY|localStorage" test/ -g '*.js' | head -60
+./artifacts/wave-2026-09-16/review-landed.stdout.log:461:[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --oneline -S"rapid_feedback_annotations" -- rapid-feedback.user.js | cat && echo "=== envelope ===" && git log --oneline -S"version: STORAGE_VERSION" -- rapid-feedback.user.js | cat && echo "=== STORAGE_VERSION def ===" && grep -n "STORAGE_VERSION" /tmp/rf-HEAD.js
+./artifacts/wave-2026-09-16/review-landed.stdout.log:472:[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "=== v5.14 load() ===" && git show 2afe902:rapid-feedback.user.js | grep -n "STORAGE_KEY\|rapid_feedback_annotations\|function load\|Array.isArray(parsed)\|pre-envelope\|function save" | head -30
+./artifacts/wave-2026-09-16/review-landed.stdout.log:477:669:				data = localStorage.getItem('rapid_feedback_annotations');
+./artifacts/wave-2026-09-16/review-landed.stdout.log:520:				data = localStorage.getItem('rapid_feedback_annotations');
+./artifacts/wave-2026-09-16/review-landed.stdout.log:536:[0m$ [0mcd /Users/server/Development/rapid-feedback && for c in 2e09bfe 28a602f 2168518; do echo "=== $c $(git log -1 --format=%s $c) ==="; git show $c:rapid-feedback.user.js 2>/dev/null | grep -n "STORAGE_KEY =\|rapid_feedback_annotations\|scope_feedback_annotations" | head -8; done
+./oxalpha-redesign/rapid-feedback.user.js:20:  const STORAGE_KEY = '__rapid_feedback_annotations_v1';
+./artifacts/wave-2026-09-11/forced-subtraction.md:30:| 1041–1042 | Legacy key migration (`rapid_feedback_annotations` → `STORAGE_KEY`) | `save()` (line 1061) always writes `scope_feedback_annotations`. The legacy key is never written by any current code path. Data under the old key exists only from pre-rename versions. Covered by issue #13. |
+./artifacts/wave-2026-09-11/forced-subtraction.md:48:| "No current code path writes the legacy key `rapid_feedback_annotations`" | ✅ Confirmed: `rg 'rapid_feedback_annotations'` → only `load()` line 1041 (the read itself). `save()` writes only to `STORAGE_KEY` = `'scope_feedback_annotations'`. **Fake break: none.** |
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:test/run.js | cat -n | sed -n '1,120p'
+1	const { POP, MARKERS, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
+     2	
+     3	module.exports = async function run() {
+     4		const { check, finish } = createReporter();
+     5		return withPage(async (page, chordClick) => {
+     6	
+     7	  // --- Multi-select three cards with the chord, then release ---
+     8	  await page.keyboard.down('Alt');
+     9	  await page.keyboard.down('Meta');
+    10	  await chordClick('#c1');
+    11	  await chordClick('#c2');
+    12	  await chordClick('#c3');
+    13	  const markersDuring = await page.evaluate(`${MARKERS}`);
+    14	  check('markers appear while accumulating', markersDuring === 3, 'got ' + markersDuring);
+    15	  await page.keyboard.up('Meta');
+    16	  await page.keyboard.up('Alt');
+    17	  await waitForPopover(page);
+    18	
+    19	  let state = await page.evaluate(`(() => {
+    20	    const p = ${POP}; if (!p) return { err: 'no popover' };
+    21	    return {
+    22	      rows: [...p.querySelectorAll('.rf-sel-row')].map(r => r.querySelector('.rf-sel-name').textContent),
+    23	      count: p.querySelector('.rf-sel-head span').textContent,
+    24	      title: p.querySelector('.rf-title').textContent,
+    25	      zoomHidden: p.querySelector('.rf-zoom-row').style.display,
+    26	      markers: ${MARKERS},
+    27	    };
+    28	  })()`);
+    29	  check('popover lists all 3 members', state.rows && state.rows.length === 3, JSON.stringify(state));
+    30	  check('primary marked first', state.rows && state.rows[0].startsWith('●') && state.rows[1].startsWith('○'), JSON.stringify(state.rows));
+    31	  check('count reads 3 elements', state.count === 'Selection — 3 elements', state.count);
+    32	  check('title shows +2', /\+2$/.test(state.title || ''), state.title);
+    33	  check('zoom row hidden for group', state.zoomHidden === 'none', state.zoomHidden);
+    34	  check('markers persist while popover open (2 non-primary)', state.markers === 2, 'got ' + state.markers);
+    35	
+    36	  // --- Live style edit previews across the whole selection ---
+    37	  await page.evaluate(`(() => {
+    38	    const p = ${POP};
+    39	    p.querySelectorAll('.rf-tab-btn')[1].click();
+    40	    const inputs = p.querySelectorAll('.rf-styles-grid input');
+    41	    const t = [...inputs].find(i => i.type === 'text');
+    42	    t.value = '40px';
+    43	    t.dispatchEvent(new Event('input', { bubbles: true }));
+    44	  })()`);
+    45	  let applied = await page.evaluate(() => ['c1', 'c2', 'c3', 'c4'].map(id => document.getElementById(id).style.cssText));
+    46	  check('style preview hits all 3 selected', applied.slice(0, 3).every(s => s.includes('40px')), JSON.stringify(applied));
+    47	  check('style preview skips unselected', applied[3] === '', JSON.stringify(applied));
+    48	
+    49	  // --- Remove a member: its preview reverts, the rest keep it ---
+    50	  await page.evaluate(`(() => {
+    51	    const p = ${POP};
+    52	    const rows = p.querySelectorAll('.rf-sel-row');
+    53	    [...rows[2].querySelectorAll('.rf-sel-act')].find(b => b.textContent === '×').click();
+    54	  })()`);
+    55	  await new Promise(r => setTimeout(r, 100));
+    56	  applied = await page.evaluate(() => ['c1', 'c2', 'c3'].map(id => document.getElementById(id).style.cssText));
+    57	  check('removed member reverts its preview', !applied[2].includes('40px'), JSON.stringify(applied));
+    58	  check('remaining members keep preview', applied[0].includes('40px') && applied[1].includes('40px'), JSON.stringify(applied));
+    59	  state = await page.evaluate(`(() => { const p = ${POP}; return {
+    60	    rows: p.querySelectorAll('.rf-sel-row').length,
+    61	    count: p.querySelector('.rf-sel-head span').textContent,
+    62	    markers: ${MARKERS} }; })()`);
+    63	  check('list shrinks to 2 after remove', state.rows === 2 && state.count === 'Selection — 2 elements', JSON.stringify(state));
+    64	  check('marker removed too', state.markers === 1, JSON.stringify(state));
+    65	
+    66	  // --- Promote member 2 to primary ---
+    67	  await page.evaluate(`(() => {
+    68	    const p = ${POP};
+    69	    const rows = p.querySelectorAll('.rf-sel-row');
+    70	    [...rows[1].querySelectorAll('.rf-sel-act')].find(b => b.textContent === '★').click();
+    71	  })()`);
+    72	  await new Promise(r => setTimeout(r, 100));
+    73	  state = await page.evaluate(`(() => { const p = ${POP}; return {
+    74	    rows: [...p.querySelectorAll('.rf-sel-row')].map(r => r.querySelector('.rf-sel-name').textContent) }; })()`);
+    75	  check('promote reorders the list', /c2|Second/.test(state.rows[0]) && state.rows[0].startsWith('●'), JSON.stringify(state.rows));
+    76	
+    77	  // --- "+ Add element" pick mode brings a 4th card in ---
+    78	  await page.evaluate(`(() => { const p = ${POP}; [...p.querySelectorAll('.rf-btn-sm')].find(b => b.textContent.includes('Add')).click(); })()`);
+    79	  await new Promise(r => setTimeout(r, 100));
+    80	  const banner = await page.evaluate(() => {
+    81	    for (const h of [...document.body.children, ...document.documentElement.children]) { const b = h.shadowRoot?.querySelector('.rf-banner'); if (b) return b.textContent; }
+    82	    return null;
+    83	  });
+    84	  check('add-element banner shown', /add to the selection/i.test(banner || ''), String(banner));
+    85	  await chordClick('#c4');
+    86	  await new Promise(r => setTimeout(r, 200));
+    87	  state = await page.evaluate(`(() => { const p = ${POP}; if (!p) return {err:'gone'}; return {
+    88	    rows: [...p.querySelectorAll('.rf-sel-row')].map(r => r.querySelector('.rf-sel-name').textContent),
+    89	    comment: p.querySelector('.rf-popover-ta').value }; })()`);
+    90	  check('added element joins the list', state.rows && state.rows.length === 3, JSON.stringify(state));
+    91	  applied = await page.evaluate(() => document.getElementById('c4').style.cssText);
+    92	  check('pending tweak carries onto the new member', applied.includes('40px'), applied);
+    93	
+    94	  // --- Submit and inspect the export ---
+    95	  await page.evaluate(`(() => {
+    96	    const p = ${POP};
+    97	    p.querySelectorAll('.rf-tab-btn')[0].click();
+    98	    const ta = p.querySelector('.rf-popover-ta');
+    99	    ta.value = 'Align these cards';
+   100	    p.querySelector('.rf-btn-primary').click();
+   101	  })()`);
+   102	  await waitForPopoverGone(page);
+   103	
+   104	  const out = await page.evaluate(() => {
+   105	    const api = window.__SCOPE_FEEDBACK_API__;
+   106	    const parsed = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
+   107	    // Storage carries a version envelope since v5.14.
+   108	    const rows = Array.isArray(parsed) ? parsed : parsed?.annotations;
+   109	    return { raw: rows, apiKeys: api ? Object.keys(api) : null };
+   110	  });
+   111	  const ann = out.raw && out.raw[0];
+   112	  check('annotation saved', !!ann, JSON.stringify(out).slice(0, 300));
+   113	  check('saved annotation keeps 2 other members', ann && ann.targets && ann.targets.length === 2, JSON.stringify(ann && ann.targets));
+   114	  check('member refs carry selector + text', ann && ann.targets.every(t => t.selector && t.text), JSON.stringify(ann && ann.targets));
+   115	
+   116	  const md = await page.evaluate(() => {
+   117	    const api = window.__SCOPE_FEEDBACK_API__;
+   118	    return api && api.markdown ? api.markdown() : null;
+   119	  });
+   120	  console.log('\n--- API keys: ' + JSON.stringify(out.apiKeys) + ' ---');
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:test/run.js | cat -n | sed -n '120,320p'
+120	  console.log('\n--- API keys: ' + JSON.stringify(out.apiKeys) + ' ---');
+   121	  if (md) console.log('--- MARKDOWN ---\n' + md + '\n----------------');
+   122	
+   123	  // --- v5.12: framework-noise classes stay out of selectors ---
+   124	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   125	  await chordClick('#c5');
+   126	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   127	  await waitForPopover(page);
+   128	  await page.evaluate(`(() => {
+   129	    const p = ${POP};
+   130	    const ta = p.querySelector('.rf-popover-ta');
+   131	    ta.value = 'utility check';
+   132	    p.querySelector('.rf-btn-primary').click();
+   133	  })()`);
+   134	  await waitForPopoverGone(page);
+   135	  const utilSel = await page.evaluate(() => {
+   136	    const a = window.__SCOPE_FEEDBACK_API__.annotations;
+   137	    return a[a.length - 1].selector;
+   138	  });
+   139	  check('selector skips variant/arbitrary classes', /#c5/.test(utilSel) && !/[:\[]/.test(utilSel) && /btnPrimary/.test(utilSel), utilSel);
+   140	
+   141	  // --- v5.13: Svelte source mapping (fake __svelte_meta, no build chain) ---
+   142	  await page.evaluate(() => {
+   143	    const mk = (el, file, line, col) => { el.__svelte_meta = { loc: { file, line, column: col } }; };
+   144	    mk(document.getElementById('row'), '/repo/src/lib/CardGrid.svelte', 18, 0);
+   145	    mk(document.getElementById('c1'), '/repo/src/lib/Card.svelte', 42, 8);
+   146	    document.getElementById('c1').__svelte_meta.parent =
+   147	      { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null };
+   148	    mk(document.getElementById('c2'), '/repo/src/lib/Card.svelte', 42, 8);
+   149	    document.getElementById('c2').__svelte_meta.parent =
+   150	      { file: '/repo/src/lib/CardGrid.svelte', line: 18, type: 'component', parent:
+   151	        { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null } };
+   152	    mk(document.getElementById('c3'), '/repo/src/lib/Other.svelte', 9, 0);
+   153	    window.__SCOPE_FEEDBACK_API__.setProjectRoot('/repo');
+   154	  });
+   155	
+   156	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   157	  await chordClick('#c1');
+   158	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   159	  await waitForPopover(page);
+   160	  await page.evaluate(`(() => { const p = ${POP};
+   161	    p.querySelector('.rf-popover-ta').value = 'svelte check';
+   162	    p.querySelector('.rf-btn-primary').click();
+   163	  })()`);
+   164	  await waitForPopoverGone(page);
+   165	  const sv = await page.evaluate(() => {
+   166	    const api = window.__SCOPE_FEEDBACK_API__;
+   167	    const a = api.annotations[api.annotations.length - 1];
+   168	    return {
+   169	      ref: a.source && a.source.ref,
+   170	      stack0: a.source && a.source.componentStack && a.source.componentStack[0].ref,
+   171	      components: a.source && a.source.components && a.source.components.map(c => c.ref),
+   172	      md: api.markdown(),
+   173	      json: api.json()
+   174	    };
+   175	  });
+   176	  const svJson = JSON.stringify(sv.json);
+   177	  check('svelte source maps file:line + route-aware stack',
+   178	    sv.ref === 'src/lib/Card.svelte:42' && sv.stack0 === 'CardGrid.svelte:18',
+   179	    JSON.stringify({ ref: sv.ref, stack0: sv.stack0 }));
+   180	  check('nested Svelte component trail keeps leaf-to-root order',
+   181	    JSON.stringify(sv.components) === JSON.stringify(['Card.svelte:42', 'CardGrid.svelte:18', 'projects/+page.svelte:15']),
+   182	    JSON.stringify(sv.components));
+   183	  check('editor deep link carries root, line and column',
+   184	    sv.md.includes('vscode://file/repo/src/lib/Card.svelte:42:8'),
+   185	    sv.md.split('\n').filter(l => l.includes('vscode')).join(' | '));
+   186	  check('exports include computed visual context',
+   187	    sv.md.includes('Looks:') && svJson.includes('"looks"') && !svJson.includes('"styles"'),
+   188	    sv.md.split('\n').find(l => l.startsWith('Looks:')) || svJson.slice(0, 200));
+   189	
+   190	  // Select similar must group by component file: c2 shares Card.svelte, c3/c4/c5 don't.
+   191	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   192	  await chordClick('#c1');
+   193	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   194	  await waitForPopover(page);
+   195	  await page.evaluate(`(() => { const p = ${POP};
+   196	    [...p.querySelectorAll('.rf-btn-sm')].find(b => /similar/i.test(b.textContent)).click();
+   197	  })()`);
+   198	  await new Promise(r => setTimeout(r, 200));
+   199	  const simRows = await page.evaluate(`(() => { const p = ${POP}; return p ? p.querySelectorAll('.rf-sel-row').length : -1; })()`);
+   200	  check('select similar groups by component file', simRows === 2, 'rows=' + simRows + ' (signature fallback would sweep all cards)');
+   201	  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'nested group check'; p.querySelector('.rf-btn-primary').click(); })()`);
+   202	  await waitForPopoverGone(page);
+   203	  const groupContext = await page.evaluate(() => {
+   204	    const api = window.__SCOPE_FEEDBACK_API__;
+   205	    const a = api.annotations[api.annotations.length - 1];
+   206	    return { targetSource: a.targets?.[0]?.source, md: api.markdown() };
+   207	  });
+   208	  check('group members retain their component trail',
+   209	    groupContext.targetSource?.components?.[0]?.ref === 'Card.svelte:42' && groupContext.md.includes('    Component: CardGrid.svelte:18 \u2190 projects/+page.svelte:15'),
+   210	    JSON.stringify(groupContext.targetSource));
+   211	  await new Promise(r => setTimeout(r, 150));
+   212	
+   213	  // Metadata on a shadow host should still describe a target inside its root.
+   214	  await page.evaluate(() => {
+   215	    const host = document.createElement('div');
+   216	    host.id = 'shadow-card-host';
+   217	    host.style.cssText = 'display:block;margin:20px;padding:12px;border:1px solid #777';
+   218	    host.__svelte_meta = {
+   219	      loc: { file: '/repo/src/lib/ShadowCard.svelte', line: 7, column: 2 },
+   220	      parent: { file: '/repo/src/routes/projects/+page.svelte', line: 15, type: 'component', parent: null }
+   221	    };
+   222	    const root = host.attachShadow({ mode: 'open' });
+   223	    const button = document.createElement('button');
+   224	    button.textContent = 'Shadow action';
+   225	    root.appendChild(button);
+   226	    document.body.appendChild(host);
+   227	  });
+   228	  const shadowPoint = await page.evaluate(() => {
+   229	    const button = document.querySelector('#shadow-card-host').shadowRoot.querySelector('button');
+   230	    const r = button.getBoundingClientRect();
+   231	    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+   232	  });
+   233	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   234	  await page.mouse.click(shadowPoint.x, shadowPoint.y);
+   235	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   236	  await waitForPopover(page);
+   237	  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'shadow context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+   238	  await waitForPopoverGone(page);
+   239	  const shadowSource = await page.evaluate(() => {
+   240	    const api = window.__SCOPE_FEEDBACK_API__;
+   241	    return api.annotations[api.annotations.length - 1].source;
+   242	  });
+   243	  check('shadow-root targets inherit host component context',
+   244	    shadowSource?.viaAncestor && shadowSource.components?.[0]?.ref === 'ShadowCard.svelte:7' && shadowSource.components?.[1]?.ref === 'projects/+page.svelte:15',
+   245	    JSON.stringify(shadowSource));
+   246	
+   247	  await page.evaluate(() => {
+   248	    const c = document.getElementById('c4');
+   249	    c.setAttribute('aria-describedby', 'c4-help');
+   250	    c.setAttribute('aria-expanded', 'true');
+   251	    const help = document.createElement('span');
+   252	    help.id = 'c4-help';
+   253	    help.textContent = 'Opens the project details';
+   254	    document.body.appendChild(help);
+   255	  });
+   256	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   257	  await chordClick('#c4');
+   258	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   259	  await waitForPopover(page);
+   260	  await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'accessibility context check'; p.querySelector('.rf-btn-primary').click(); })()`);
+   261	  await waitForPopoverGone(page);
+   262	  const a11yContext = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.at(-1).a11y);
+   263	  check('accessibility context includes descriptions and states',
+   264	    a11yContext?.description === 'Opens the project details' && a11yContext.states?.expanded === 'true',
+   265	    JSON.stringify(a11yContext));
+   266	  await page.evaluate(() => {
+   267	    document.getElementById('shadow-card-host')?.remove();
+   268	    document.getElementById('c4-help')?.remove();
+   269	  });
+   270	
+   271	  // Hostile page: a throwing __svelte_meta getter must not break capture.
+   272	  await page.evaluate(() => {
+   273	    Object.defineProperty(document.getElementById('c1'), '__svelte_meta', { get() { throw new Error('boom'); }, configurable: true });
+   274	  });
+   275	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   276	  await chordClick('#c1');
+   277	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   278	  await new Promise(r => setTimeout(r, 250));
+   279	  const hostilePop = await page.evaluate(`(() => { const p = ${POP}; return !!p; })()`);
+   280	  check('hostile __svelte_meta getter fails soft', hostilePop, '');
+   281	  await page.keyboard.press('Escape');
+   282	  await new Promise(r => setTimeout(r, 150));
+   283	
+   284	  // Svelte-looking page without dev metadata → explicit disclosure, not silence.
+   285	  await page.evaluate(() => {
+   286	    delete document.getElementById('row').__svelte_meta;
+   287	    document.body.classList.add('svelte-probe-class');
+   288	  });
+   289	  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+   290	  await chordClick('#c4');
+   291	  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+   292	  await waitForPopover(page);
+   293	  await page.evaluate(`(() => { const p = ${POP};
+   294	    p.querySelector('.rf-popover-ta').value = 'disclosure check';
+   295	    p.querySelector('.rf-btn-primary').click();
+   296	  })()`);
+   297	  await waitForPopoverGone(page);
+   298	  const disc = await page.evaluate(() => {
+   299	    const api = window.__SCOPE_FEEDBACK_API__;
+   300	    const a = api.annotations[api.annotations.length - 1];
+   301	    return { status: a.source && a.source.status, md: api.markdown() };
+   302	  });
+   303	  check('prod-build disclosure when dev meta absent',
+   304	    disc.status === 'svelte-production-build' && disc.md.includes('Svelte production build'),
+   305	    String(disc.status));
+   306	
+   307		return finish();
+   308		});
+   309	};
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "function closePopover\|function removePopover\|rf-btn-primary\|function persist\|save()\|function renderPopover\|function openPopover\|appendChild(popover\|shadowRoot.appendChild\|function submit" /tmp/rf-HEAD.js | head -60
+1070:	function save() {
+1078:	function persist(fn) {
+1080:		save();
+1143:.rf-btn-primary{background:#258a55;color:#fff;border-color:#258a55;font-weight:600}
+1144:.rf-btn-primary:hover{background:#1f7a4a}
+1986:		function submit() {
+2025:		submitBtn.className = 'rf-btn rf-btn-primary';
+2039:		root.appendChild(popover);
+3127:		clear() { annotations = []; save(); },
+[0m$ [0mcd /Users/server/Development/rapid-feedback && rg -n "waitFor|waitForPopover|waitForPopoverGone" test/ -g '*.js'
+test/common.js:58:async function waitFor(page, pageExpr, { timeoutMs = 2000, intervalMs = 25, description } = {}) {
+test/common.js:66:	throw new Error('waitFor timeout after ' + timeoutMs + 'ms: ' + (description || pageExpr.slice(0, 80)) + ' (last=' + JSON.stringify(last) + ')');
+test/common.js:68:const waitForPopover = (page, opts) => waitFor(page, `!!(${POP})`, { description: 'popover open', ...opts });
+test/common.js:69:const waitForPopoverGone = (page, opts) => waitFor(page, `!(${POP})`, { description: 'popover closed', ...opts });
+test/common.js:71:module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
+test/run.js:1:const { POP, MARKERS, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
+test/run.js:17:  await waitForPopover(page);
+test/run.js:102:  await waitForPopoverGone(page);
+test/run.js:127:  await waitForPopover(page);
+test/run.js:134:  await waitForPopoverGone(page);
+test/run.js:159:  await waitForPopover(page);
+test/run.js:164:  await waitForPopoverGone(page);
+test/run.js:194:  await waitForPopover(page);
+test/run.js:202:  await waitForPopoverGone(page);
+test/run.js:236:  await waitForPopover(page);
+test/run.js:238:  await waitForPopoverGone(page);
+test/run.js:259:  await waitForPopover(page);
+test/run.js:261:  await waitForPopoverGone(page);
+test/run.js:292:  await waitForPopover(page);
+test/run.js:297:  await waitForPopoverGone(page);
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1960,2060p' /tmp/rf-HEAD.js | cat -n | sed 's/^ *\([0-9]*\)/\1/' | awk '{printf "%d: %s\n", NR+1959, substr($0, index($0,":")+2)}' | head -110
+1960: 					if (!styleSnapshot.has(el)) continue;
+1961: 					const selector = describeElement(el);
+1962: 					if (!selector) continue;
+1963: framePathFor(el), style: styleSnapshot.get(el) });
+1964: 				}
+1965: 				return restore.length ? {
+1966: curData.selector,
+1967: curData.framePath || framePathFor(members[0]),
+1968: restore,
+1969: null;
+1970: 1			}
+1971: 2	
+1972: 3			// One shape-builder for Submit and Cut — the two paths construct the same
+1973: 4			// annotation record and must never drift apart.
+1974: 5			function buildAnnotationData(comment) {
+1975: 6				return {
+1976: 7					...curData,
+1977: 8					comment,
+1978: selCat,
+1979: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
+1980: pendingStyleRestore(),
+1981: destData,
+1982: memberRefs(),
+1983: 4				};
+1984: 5			}
+1985: 6	
+1986: 7			function submit() {
+1987: 8				let comment = ta.value.trim();
+1988: 9				if (Object.keys(adjustedStyles).length) {
+1989: ' + v + ';').join('\n')
+1990: Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n');
+1991: 2				}
+1992: 3				if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+1993: 4				const annotationData = buildAnnotationData(comment);
+1994: 5				persist(() => {
+1995: the panel can delete other
+1996: 7					// rows while this popover is open, shifting indices. If the
+1997: 8					// original record is gone, append instead of overwriting a
+1998: 9					// stranger that slid into its slot.
+1999: 0					const ref = initial?.editRef;
+2000: -1;
+2001: 2					if (at >= 0) annotations[at] = makeAnnotation(annotationData);
+2002: 3					else if (Number.isInteger(initial?.editIndex) && !ref && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
+2003: 4					else annotations.push(makeAnnotation(annotationData));
+2004: 5				});
+2005: 6				keepStyles();
+2006: 7				hidePopover();
+2007: 8				showToast('Saved');
+2008: 9			}
+2009: 0	
+2010: 1			const actions = document.createElement('div');
+2011: 2			actions.className = 'rf-actions';
+2012: 3			const cancelBtn = document.createElement('button');
+2013: 4			cancelBtn.className = 'rf-btn';
+2014: 5			cancelBtn.textContent = 'Cancel';
+2015: 6			cancelBtn.addEventListener('click', cancelPopover);
+2016: 7			const cutBtn = document.createElement('button');
+2017: 8			cutBtn.className = 'rf-btn';
+2018: 9			cutBtn.textContent = 'Cut';
+2019: 0			cutBtn.addEventListener('click', () => {
+2020: 1				const ann = makeAnnotation(buildAnnotationData(ta.value.trim() || '(no comment)'));
+2021: 2				copyText(toMarkdown([ann]));
+2022: 3				hidePopover();
+2023: 4			});
+2024: 5			const submitBtn = document.createElement('button');
+2025: 6			submitBtn.className = 'rf-btn rf-btn-primary';
+2026: 7			submitBtn.textContent = 'Submit';
+2027: 8			submitBtn.addEventListener('click', submit);
+2028: 9			actions.appendChild(cancelBtn);
+2029: 0			actions.appendChild(cutBtn);
+2030: 1			actions.appendChild(submitBtn);
+2031: 2			popover.appendChild(actions);
+2032: 3	
+2033: 4			ta.addEventListener('keydown', (e) => {
+2034: 5				e.stopPropagation();
+2035: 6				if (IS_SAVE_KEY(e)) { e.preventDefault(); submit(); }
+2036: 7			});
+2037: 8			ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); }, true);
+2038: 9	
+2039: 0			root.appendChild(popover);
+2040: 1	
+2041: 2			host.style.position = 'fixed';
+2042: 3			placePopoverAt(host, getViewportRect(el), popover.offsetHeight || 480);
+2043: 4	
+2044: 5			popoverEl = host;
+2045: 6			popoverRoot = root;
+2046: 7			// Lets a chord gesture grow this selection instead of replacing the popover.
+2047: 8			popoverApi = {
+2048: 9				addMembers(els) {
+2049: 0					const fresh = els.filter(m => m?.isConnected && !members.includes(m));
+2050: 1					if (!fresh.length) { showToast('Already in the selection'); return; }
+2051: 2					members.push(...fresh);
+2052: 3					syncSelection();
+2053: 's'));
+2054: 5				}
+2055: 6			};
+2056: 7			// Draws the markers, points live styles at the whole selection and re-applies
+2057: 8			// any edits carried back from a pick mode.
+2058: 9			syncSelection();
+2059: 00			startAnchor(host, () => zoomTarget);
+2060: 01			// SPA re-renders can remove every selected element mid-draft. The anchor loop
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "function closePopover\|function openPopover\|closePopover()\|hideOutline\|draft\b" /tmp/rf-HEAD.js | sed -n '1,60p'
+18:// @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
+19:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+22:// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
+23:// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
+80:	// Escape must not destroy an in-progress draft while the user is typing.
+154:	// Reports whether the open popover's draft holds user work worth protecting
+160:	// MutationObservers watching for SPA re-renders that strand the draft; one per
+1333:	// Resetting it keeps the draft intact and returns the popover to the live target.
+1581:		// Every selected element left the DOM (SPA swap, re-render). Keep the draft
+1803:		// A reflex Escape must not nuke real work, but a pristine draft closes
+2060:		// SPA re-renders can remove every selected element mid-draft. The anchor loop
+2184:		hideOutline();
+2189:	// Cancel/Esc: discard the draft AND the dragged position — an explicit
+2582:	function hideOutline() {
+2589:	// next left click picks, Escape cancels, draft popover restored afterwards).
+2597:			rejectIf: (el, pm) => ((pm.draft?.members || []).includes(el) ? 'Already selected' : null),
+2609:	function enterPick(kind, sourceEl, sourceData, draft) {
+2611:		pickMode = { kind, sourceEl, sourceData, draft };
+2619:		const { kind, sourceEl, sourceData, draft } = pickMode;
+2624:		hideOutline();
+2626:			if (result) draft.members = [...(draft.members || [sourceEl]), result];
+2627:			showPopover(sourceEl, sourceData, draft);
+2630:			showPopover(sourceEl, sourceData, { ...draft, destination: result || draft.destination });
+2903:		// growing the selection keeps the draft comment, styles and destination that
+2956:		if (!IS_CHORD(e)) return hideOutline();
+3039:			// Escape from inside a comment box: when the draft holds real work
+3042:			// draft, or focus outside any input, closes immediately.
+3070:			hideOutline();
+3094:	// safer than silently retargeting an unsaved draft onto the new screen. But SPAs
+3119:	// changes would leave a draft pointing at the old screen.
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "function syncSelection\|function renderRows\|function hidePopover\|function showPopover\|requestAnimationFrame\|setTimeout" /tmp/rf-HEAD.js | head -40
+1215:		setTimeout(() => host.remove(), 2000);
+1274:		fabGraceTimer = setTimeout(() => {
+1391:				anchor.raf = requestAnimationFrame(tick);
+1399:			anchor.raf = requestAnimationFrame(tick);
+1410:		anchor.raf = requestAnimationFrame(tick);
+1425:	function showPopover(el, data, initial) {
+1568:		function syncSelection() {
+2163:	function hidePopover() {
+2314:			setTimeout(() => { if (clearBtn.dataset.armed) { delete clearBtn.dataset.armed; clearBtn.textContent = 'Clear'; } }, 2500);
+2974:		if (!hoverRaf) hoverRaf = requestAnimationFrame(flushHover);
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show HEAD:test/run-all.js | cat -n | sed -n '1,80p'
+1	const suites = [require('./run'), require('./run2'), require('./run3'), require('./run4'), require('./run5'), require('./run6'), require('./run7'), require('./run8')];
+     2	
+     3	(async () => {
+     4		let passed = 0;
+     5		for (const suite of suites) if (await suite()) passed++;
+     6		console.log('\n' + passed + '/' + suites.length + ' suites passed');
+     7		process.exit(passed === suites.length ? 0 : 1);
+     8	})().catch(e => { console.error('HARNESS ERROR', e); process.exit(2); });
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1568,1625p' /tmp/rf-HEAD.js && echo "=== hidePopover 2163-2200 ===" && sed -n '2163,2200p' /tmp/rf-HEAD.js
+function syncSelection() {
+			members = members.filter(m => m?.isConnected);
+			if (!members.length) { setLostState(); return; }
+			// Reviving from a lost state must undo everything setLostState changed.
+			popover.classList.remove('rf-lost');
+			submitBtn.title = '';
+			renderHeader();
+			setSelectionMarkers(members.slice(1), 1);
+			setStyleTargets(members);
+			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
+			renderMembers();
+		}
+
+		// Every selected element left the DOM (SPA swap, re-render). Keep the draft
+		// visible and submit-able: curData still contains the captured target details,
+		// and a chord-add can revive the popover.
+		function setLostState() {
+			setSelectionMarkers([]);
+			setStyleTargets([]);
+			popover.classList.add('rf-lost');
+			titleEl.textContent = 'Element no longer on page';
+			sourceEl.style.display = 'none';
+			selEl.textContent = curData.selector || '';
+			quoteEl.style.display = 'none';
+			selList.innerHTML = '';
+			selList.style.display = 'none';
+			zoomRow.style.display = 'none';
+			submitBtn.title = 'The selected element is gone — captured details will be saved';
+		}
+
+		function setPrimary(next) {
+			if (!next) return;
+			zoomTarget = next;
+			curData = capturableEl(next).data;
+			zoomTag.textContent = compactLabel(next);
+			syncSelection();
+			refreshStyleInputs();
+			showOutline(next);
+			repositionTo(next);
+		}
+
+		function renderMembers() {
+			const total = members.length + missingMembers.length;
+			selCount.textContent = 'Selection — ' + total + (total === 1 ? ' element' : ' elements');
+			selList.innerHTML = '';
+			// A one-row list is pure noise; the header already names that element.
+			selList.style.display = total > 1 ? 'block' : 'none';
+			zoomRow.style.display = total > 1 ? 'none' : 'flex';
+			if (missingMembers.length) {
+				const status = document.createElement('div');
+				status.className = 'rf-sel-status';
+				status.textContent = members.length + ' of ' + total + ' elements still found';
+				selList.appendChild(status);
+			}
+			if (members.length > 1 || missingMembers.length) {
+				const labels = members.map(compactLabel);
+				members.forEach((m, i) => {
+					const row = document.createElement('div');
+=== hidePopover 2163-2200 ===
+	function hidePopover() {
+		if (drag) {
+			removeEventListener('pointermove', drag.move);
+			removeEventListener('pointerup', drag.up);
+			for (const doc of drag.documents) {
+				doc.removeEventListener('pointermove', drag.move);
+				doc.removeEventListener('pointerup', drag.up);
+			}
+			drag = null;
+		}
+		for (const w of domWatchers) w.disconnect();
+		domWatchers = [];
+		// A deliberately dragged position survives across popovers — that's the
+		// point of remembering it. Only an explicit Cancel/Esc resets it
+		// (see cancelPopover).
+		revertStyles();
+		popoverApi = null;
+		popoverDraftGuard = null;
+		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
+		styleTargets = [];
+		styleSnapshot = null;
+		hideOutline();
+		clearSelectionMarkers();
+		stopAnchor();
+	}
+
+	// Cancel/Esc: discard the draft AND the dragged position — an explicit
+	// "put everything back where it was" gesture.
+	function cancelPopover() {
+		if (popoverOffset) { popoverOffset = null; savePopoverOffset(); }
+		hidePopover();
+	}
+
+	// --- Popover dragging ---
+	// The header is the grab handle. A pointer drag moves the popover by updating
+	// its transform; the offset persists across popovers and reloads (per origin)
+	// until Cancel/Esc resets it. Sub-4px movements are clicks, not drags.
+	function beginPopoverDrag(e, host) {
+[0m$ [0mcd /Users/server/Development/rapid-feedback && awk 'NR>=1420 && NR<=2200 && /^\tfunction |^\t\tfunction |^\tconst .* = \(|^\tfunction buildPopover|^function /{print NR": "$0}' /tmp/rf-HEAD.js
+1422: 	function clamp(v, min, max) { return Math.min(max, Math.max(v, min)); }
+1425: 	function showPopover(el, data, initial) {
+1492: 		function renderHeader() {
+1559: 		function repositionTo(target) {
+1568: 		function syncSelection() {
+1584: 		function setLostState() {
+1598: 		function setPrimary(next) {
+1609: 		function renderMembers() {
+1684: 		function directSvelteFile(el) {
+1689: 		function selectSimilar() {
+1736: 		function setZoomTarget(next) {
+1834: 		function currentDraft() {
+1947: 		function memberRefs() {
+1956: 		function pendingStyleRestore() {
+1974: 		function buildAnnotationData(comment) {
+1986: 		function submit() {
+2085: 	function showGroupPopover(targets) {
+2091: 	function captureMemberRef(el) {
+2109: 	function applyStyle(prop, val, adjustedStyles) {
+2121: 	function setStyleTargets(els) {
+2127: 	function revertStyles() {
+2139: 	function keepStyles() {
+2148: 	function revertSavedTweaks(a) {
+2163: 	function hidePopover() {
+2191: 	function cancelPopover() {
+2200: 	function beginPopoverDrag(e, host) {
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1425,1500p' /tmp/rf-HEAD.js
+function showPopover(el, data, initial) {
+		hidePopover();
+		// Pin the record being edited by identity so a panel delete that shifts
+		// array indices mid-edit cannot redirect Submit onto another annotation.
+		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
+			try { initial.editRef = annotations[initial.editIndex]; } catch {}
+		}
+		const { host, root } = createShadowRoot();
+		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
+		// static position sits at the end of document flow. Without an explicit
+		// origin, every translate3d placement is displaced downward by the whole
+		// page height and the popover renders off-screen on all but short pages.
+		host.style.cssText = `all:initial;position:fixed;top:0;left:0;z-index:${Z.surface};pointer-events:none`;
+		root.appendChild(shadowStyle());
+		const ps = document.createElement('style');
+		ps.textContent = popoverStyles();
+		root.appendChild(ps);
+
+		const popover = document.createElement('div');
+		popover.className = 'rf-popover';
+
+		// Drag handle. The whole strip is the grip; the drag threshold inside
+		// beginPopoverDrag distinguishes drags from clicks on it.
+		const dragHandle = document.createElement('div');
+		dragHandle.className = 'rf-drag-handle';
+		dragHandle.title = 'Drag to move. Alt+Shift+R resets the position.';
+		dragHandle.addEventListener('pointerdown', (e) => {
+			e.stopPropagation();
+			host.style.userSelect = 'none';
+			document.documentElement.classList.add('rf-dragging');
+			beginPopoverDrag(e, host);
+		});
+		dragHandle.addEventListener('click', (e) => e.stopPropagation());
+		popover.appendChild(dragHandle);
+
+		const adjustedStyles = { ...(initial?.adjustedStyles || {}) };
+		let activeTab = 'comment';
+		let zoomTarget = el;
+		// curData tracks whichever element the popover currently describes, so the
+		// header, the style defaults and the saved annotation never disagree.
+		let curData = data;
+		// The live selection. members[0] is the primary — the element the header, the
+		// zoom row and the annotation record describe; the rest ride along as group
+		// members. Holding live nodes (not frozen refs) is what makes the list
+		// editable: rows can be dropped, promoted or added while the popover is open.
+		let members = (initial?.members?.length ? initial.members : [el]).filter(m => m?.isConnected);
+		let missingMembers = [...(initial?.missingMembers || [])];
+		let similarAdded = [];
+		if (!members.includes(el)) members.unshift(el);
+		// Assigned once the styles grid exists; zooming re-seeds it.
+		let refreshStyleInputs = () => {};
+
+		// Title + source + selector + text
+		const titleEl = document.createElement('div');
+		titleEl.className = 'rf-title';
+		const sourceEl = document.createElement('div');
+		sourceEl.className = 'rf-source';
+		const selEl = document.createElement('div');
+		selEl.className = 'rf-sub';
+		const quoteEl = document.createElement('div');
+		quoteEl.className = 'rf-quote';
+
+		popover.appendChild(titleEl);
+		popover.appendChild(sourceEl);
+		popover.appendChild(selEl);
+		popover.appendChild(quoteEl);
+
+		function renderHeader() {
+			titleEl.textContent = members.length > 1
+				? targetLabel({ ...curData, comment: '' }) + ' +' + (members.length - 1)
+				: targetLabel({ ...curData, comment: '' });
+			if (curData.source?.ref) {
+				sourceEl.style.display = 'block';
+				const trail = componentTrail(curData.source, true);
+				sourceEl.textContent = '◈ ' + (trail || curData.source.ref) + (curData.source.viaAncestor ? ' (ancestor)' : '');
+				sourceEl.title = curData.source.ref + (trail ? ' | ' + trail : '');
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "rf-btn-sm\|similar" /tmp/rf-HEAD.js | head -30 && echo "=== 2036-2062 ===" && sed -n '2036,2062p' /tmp/rf-HEAD.js
+10:// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+19:// @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
+1145:.rf-btn-sm{padding:4px 9px;font-size:11px;background:transparent;color:#697783;border-color:#d7dfe5}
+1472:		let similarAdded = [];
+1525:		const similarBtn = document.createElement('button');
+1526:		similarBtn.className = 'rf-btn rf-btn-sm';
+1527:		similarBtn.textContent = '⧉ Select similar';
+1529:		addBtn.className = 'rf-btn rf-btn-sm';
+1532:		selHead.appendChild(similarBtn);
+1690:			if (similarAdded.length) {
+1695:				const droppedPrimary = similarAdded.includes(members[0]);
+1696:				members = members.filter(member => !similarAdded.includes(member));
+1697:				similarAdded = [];
+1698:				similarBtn.textContent = '⧉ Select similar';
+1719:			if (!matches.length) { showToast('No similar siblings found'); return; }
+1720:			similarAdded = matches;
+1722:			similarBtn.textContent = 'Undo similar selection';
+1724:			showToast('Added ' + matches.length + ' similar element' + (matches.length === 1 ? '' : 's') + (directFile ? ' by component' : '') + (allMatches.length > SIMILAR_MAX ? ' (capped at ' + SIMILAR_MAX + ')' : ''));
+1727:		similarBtn.addEventListener('click', selectSimilar);
+1822:		destClear.className = 'rf-btn rf-btn-sm';
+1917:		resetBtn.className = 'rf-btn rf-btn-sm';
+=== 2036-2062 ===
+		});
+		ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.stopPropagation(); }, true);
+
+		root.appendChild(popover);
+
+		host.style.position = 'fixed';
+		placePopoverAt(host, getViewportRect(el), popover.offsetHeight || 480);
+
+		popoverEl = host;
+		popoverRoot = root;
+		// Lets a chord gesture grow this selection instead of replacing the popover.
+		popoverApi = {
+			addMembers(els) {
+				const fresh = els.filter(m => m?.isConnected && !members.includes(m));
+				if (!fresh.length) { showToast('Already in the selection'); return; }
+				members.push(...fresh);
+				syncSelection();
+				showToast('Added ' + fresh.length + ' element' + (fresh.length === 1 ? '' : 's'));
+			}
+		};
+		// Draws the markers, points live styles at the whole selection and re-applies
+		// any edits carried back from a pick mode.
+		syncSelection();
+		startAnchor(host, () => zoomTarget);
+		// SPA re-renders can remove every selected element mid-draft. The anchor loop
+		// suspends when idle, so it can't be relied on to notice; a MutationObserver
+		// stays silent until the page actually mutates, then runs one cheap
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== 2168518 file listing/paths ==" && git ls-tree --name-only 2168518 && echo "== grep in 2168518 ==" && git show 2168518:rapid-feedback.user.js | grep -n "STORAGE_KEY\|rapid_feedback\|scope_feedback\|function load\|function save" | head -20
+== 2168518 file listing/paths ==
+.scratch
+README.md
+rapid-feedback.user.js
+== grep in 2168518 ==
+51:	const STORAGE_KEY = 'scope_feedback_annotations';
+431:	function load() {
+433:			let data = localStorage.getItem(STORAGE_KEY);
+435:				data = localStorage.getItem('rapid_feedback_annotations');
+436:				if (data) localStorage.setItem(STORAGE_KEY, data);
+442:	function save() {
+443:		try { localStorage.setItem(STORAGE_KEY, JSON.stringify(annotations)); } catch {}
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== save() call sites HEAD ==" && grep -n "save()\|persist(" /tmp/rf-HEAD.js && echo "== componentStack ==" && grep -n "componentStack" /tmp/rf-HEAD.js && echo "== sleeps in a0f4d02 run.js ==" && git show a0f4d02:test/run.js | grep -c "setTimeout" && echo "== sleeps in HEAD run.js ==" && git show HEAD:test/run.js | grep -c "setTimeout"
+== save() call sites HEAD ==
+1070:	function save() {
+1078:	function persist(fn) {
+1080:		save();
+1994:			persist(() => {
+2300:		toolbar.appendChild(toolbarBtn('Cut All', () => { if (!annotations.length) { showToast('Nothing to cut'); return; } copyText(toMarkdown(annotations)); persist(() => { annotations = []; }); showToast('Cut'); }));
+2308:				persist(() => { annotations = []; });
+2329:				persist(() => { a.comment = cel.textContent.trim(); });
+2350:				persist(() => { annotations.splice(idx, 1); });
+2399:			persist(() => { annotations.push(makeAnnotation({ comment: t, category: activeCategory })); });
+3127:		clear() { annotations = []; save(); },
+== componentStack ==
+640:			componentStack: components?.slice(1).map(frame => ({ type: frame.type, ref: frame.ref })) || null
+753:		if (Array.isArray(source.componentStack)) refs.push(...source.componentStack.map(frame => frame?.ref));
+== sleeps in a0f4d02 run.js ==
+22
+== sleeps in HEAD run.js ==
+8
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls -la artifacts/wave-2026-09-15/ && echo "=== suite-29-fix.log (tail) ===" && tail -25 artifacts/wave-2026-09-15/suite-29-fix.log && echo "=== suite-35.log (tail) ===" && tail -15 artifacts/wave-2026-09-15/suite-35.log
+total 56
+drwxr-xr-x@ 6 server  staff   192 Sep 15 07:44 .
+drwxr-xr-x@ 8 server  staff   256 Sep 16 07:45 ..
+-rw-r--r--@ 1 server  staff  2182 Sep 15 07:37 quick-scan.md
+-rw-r--r--@ 1 server  staff  6773 Sep 15 07:39 suite-29-fix.log
+-rw-r--r--@ 1 server  staff  6439 Sep 15 07:37 suite-29.log
+-rw-r--r--@ 1 server  staff  6773 Sep 15 07:45 suite-35.log
+=== suite-29-fix.log (tail) ===
+PASS  chord-click on tool chrome does not annotate <html>
+PASS  wiping every selected element dims the popover to the lost state
+PASS  chord-add revives a lost draft with Submit available
+PASS  first click after an empty chord reaches the FAB
+PASS  holding the chord past the gesture window keeps the selection
+PASS  popover renders inside the viewport on a tall page
+
+23/23 checks passed
+PASS  same-origin iframe opens the child popover
+PASS  iframe pick targets the inner element
+PASS  iframe pick captures child text
+PASS  iframe path is persisted for reopening
+PASS  iframe style preview is applied
+PASS  iframe style restore resolves through the frame path
+PASS  markdown identifies the containing iframe
+PASS  iframe popover is positioned in the top viewport
+
+8/8 checks passed
+PASS  Submit stays available after target removal
+PASS  removed target draft can be submitted
+
+2/2 checks passed
+
+8/8 suites passed
+suite rc=0
+=== suite-35.log (tail) ===
+PASS  iframe pick captures child text
+PASS  iframe path is persisted for reopening
+PASS  iframe style preview is applied
+PASS  iframe style restore resolves through the frame path
+PASS  markdown identifies the containing iframe
+PASS  iframe popover is positioned in the top viewport
+
+8/8 checks passed
+PASS  Submit stays available after target removal
+PASS  removed target draft can be submitted
+
+2/2 checks passed
+
+8/8 suites passed
+suite rc=0
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== addEventListener('storage' ==" && grep -n "addEventListener('storage'\|'storage'" /tmp/rf-HEAD.js | head; echo "== load() call sites ==" && grep -n "load();" /tmp/rf-HEAD.js | head; echo "== Array.isArray(parsed) in test ==" && rg -n "Array.isArray\(parsed\)|parsed\?\.annotations" test/; echo "== history: writers of legacy key ==" && git log --all --oneline -S"setItem('rapid_feedback_annotations'" | cat; echo "(none above = never written)"; echo "== history: any mention, all paths ==" && git log --all --oneline -S"rapid_feedback_annotations" | cat
+== addEventListener('storage' ==
+== load() call sites ==
+3134:	load();
+== Array.isArray(parsed) in test ==
+test/run.js:108:    const rows = Array.isArray(parsed) ? parsed : parsed?.annotations;
+== history: writers of legacy key ==
+(none above = never written)
+== history: any mention, all paths ==
+460a0dc Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+a0f4d02 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+c0a41a7 Wave 2026-09-11 artifacts: abstraction-zoom + forced-subtraction reports, automation receipt
+85790a7 Add OX Alpha independent rebuild and four-way comparison
+2168518 v5.0: selector overhaul, chord-hold preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
+28a602f Move rapid-feedback.user.js to userscripts/ collection
+2e09bfe Rename scope-feedback to rapid-feedback, bump to v4.1, fix gist URL
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "=== suite-29.log grep for run5 failures ===" && grep -n "FAIL\|checks passed\|suites passed" artifacts/wave-2026-09-15/suite-29.log | head -20; echo "=== compare suite-29.log vs suite-29-fix.log (diffstat) ===" && diff <(sed 's/[0-9]//g' artifacts/wave-2026-09-15/suite-29.log) <(sed 's/[0-9]//g' artifacts/wave-2026-09-15/suite-29-fix.log) | head -20; echo "rc=$?"
+=== suite-29.log grep for run5 failures ===
+62:31/31 checks passed
+106:20/20 checks passed
+116:8/8 checks passed
+120:2/2 checks passed
+131:FAIL  annotation from another page loads
+=== compare suite-29.log vs suite-29-fix.log (diffstat) ===
+131,143c131,176
+< FAIL  annotation from another page loads
+<       
+< HARNESS ERROR Error [TypeError]: Cannot read properties of null (reading 'click')
+<     at evaluate (evaluate at /Users/server/Development/rapid-feedback/test/run.js::, <anonymous>::)
+<     at evaluate (evaluate at /Users/server/Development/rapid-feedback/test/run.js::, <anonymous>::)
+<     at #evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ExecutionContext.js::)
+<     at async ExecutionContext.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/ExecutionContext.js::)
+<     at async IsolatedWorld.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/cdp/IsolatedWorld.js::)
+<     at async CdpFrame.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/api/Frame.js::)
+<     at async CdpPage.evaluate (/Users/server/Development/rapid-feedback/test/node_modules/puppeteer-core/lib/cjs/puppeteer/api/Page.js::)
+<     at async /Users/server/Development/rapid-feedback/test/run.js::
+<     at async withPage (/Users/server/Development/rapid-feedback/test/common.js::)
+<     at async /Users/server/Development/rapid-feedback/test/run-all.js::
+---
+> PASS  annotation from another page loads
+> PASS  editing an off-page annotation edits the comment in place, not the popover
+> PASS  the off-page comment edit persists
+> 
+> / checks passed
+rc=0
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log --all --oneline --reverse | head -12 && echo "== files at 2e09bfe~1 ==" && git ls-tree -r --name-only 2e09bfe~1 && echo "== key in 2e09bfe~1 files ==" && for f in $(git ls-tree -r --name-only 2e09bfe~1 | grep -E '\.user\.js$'); do echo "-- $f"; git show "2e09bfe~1:$f" | grep -n "rapid_feedback_annotations\|STORAGE_KEY =\|localStorage.setItem" | head -5; done
+7469879 Initial commit: Rapid Feedback userscript
+6ca9a92 Bump to v2.4
+299f39a Fix FAB click conflict with feedback chord
+99e6403 Rename Export→Copy Markdown, add Cut button
+0ff78d0 Add in-panel update check (click version number)
+365a079 Bump to v2.5
+968544b Add Clear button back, rename Copy→Copy Markdown to Copy
+ddbaf55 Improve colour derivation in Rapid Feedback - read CSS vars with app-aligned fallbacks
+bc237b5 Fix: re-render panel after submitting annotation via popover
+6880d4b Bump to v2.6
+b2df71b Bump @version header to 2.6 to match VERSION constant
+cd9157e v2.8: stopPropagation on keydown/keyup/keypress in feedback inputs to prevent SpeedGrader hotkey hijacking
+== files at 2e09bfe~1 ==
+README.md
+scope-feedback.user.js
+== key in 2e09bfe~1 files ==
+-- scope-feedback.user.js
+29:  var STORAGE_KEY = 'scope_feedback_annotations';
+157:  var storageOk = (function(){try{var k='__sf__';localStorage.setItem(k,'1');localStorage.removeItem(k);return true}catch(e){return false}})();
+159:  function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(annotations)); } catch(e) {} }
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== a0f4d02 commit: any test edits besides run5? ==" && git show --name-only --format=%s a0f4d02 | cat; echo "== .scratch/forced-subtraction note lines 75-100 ==" && sed -n '75,100p' .scratch/forced-subtraction-2026-09-10.md
+== a0f4d02 commit: any test edits besides run5? ==
+Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+
+rapid-feedback.user.js
+test/run5.js
+== .scratch/forced-subtraction note lines 75-100 ==
+| | Items |
+| --- | --- |
+| GOES | None. Both exporters are tested (run2: `markdown()`, `json()`) and are the tool's output contract. |
+| STAYS | Everything. |
+| BREAKS | n/a. |
+
+### Area 6 — Storage/session persistence (`load`, `save`, `persist`, `loadPopoverOffset`, `savePopoverOffset`, versioned envelope)
+
+| | Items |
+| --- | --- |
+| GOES | **Legacy key migration**: lines 1056–1059 read pre-rename key `rapid_feedback_annotations` and copy it into `STORAGE_KEY`. Three lines, dormant since the v2-era rename. Evidence: only reference to that key name in the repo (rg: 1 hit). |
+| STAYS | Versioned envelope + corrupt-row skip (README advertises both); popover-offset persistence. |
+| BREAKS | If GOES executed: on any origin not visited since the rename, old annotations would sit in localStorage but never load — silent (benign) data shadowing. No test covers the migration. → **speculative ticket, "evaluate whether worth doing"** (issue #5 below). |
+
+### Area 7 — Test harness + suites (`test/common.js`, run–run8, `page.html`, `page2.html`, `run-all.js`)
+
+| | Items |
+| --- | --- |
+| GOES | Nothing is safely deletable while RED: run5–run8 never execute, so their features (chrome click-through, iframe picking, lost-target submit) have zero current harness verification — deleting any of them is unverifiable, and deleting run4 would hide a real regression signal. `test/repro-h1.js` (untracked popover-position repro) is a deletion candidate but is foreign work — left to its owner. |
+| STAYS | `common.js` (shadow-root opener — required because the script closes its roots), all 8 suites, both fixtures. `__SCOPE_FEEDBACK_API__` is **load-bearing for 7 of 8 suites** (rg: 25+ call sites) — hidden coupling: reshaping the public API breaks the harness. |
+| BREAKS | Deleting run4 anyway → "similar undo re-seats primary" coverage lost; deleting run5–8 unexecuted → their behavior silently unverified forever. The run4 crash itself is the harness's top-priority debt (blocks 50% of suites); it is a fix, not a deletion, and is context for every acceptance criterion below. |
+
+### Area 8 — Redesign folders (each its own candidate)
+
+Nothing in script, tests, README, or harness references any redesign folder (rg: hits only inside
+the folders and the historical `.scratch/comparison*.md` records). All three landed 2026-08-21 as
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== 2e09bfe:rapid-feedback.user.js ==" && git show 2e09bfe:rapid-feedback.user.js | grep -n "rapid_feedback_annotations\|scope_feedback_annotations\|STORAGE_KEY =" | head -5; echo "== 2e09bfe:scope-feedback.user.js (kept copy) ==" && git show 2e09bfe:scope-feedback.user.js | grep -n "rapid_feedback_annotations\|scope_feedback_annotations\|STORAGE_KEY =" | head -5; echo "== 28a602f:userscripts/rapid-feedback.user.js ==" && git ls-tree -r --name-only 28a602f && git show 28a602f:userscripts/rapid-feedback.user.js 2>/dev/null | grep -n "rapid_feedback_annotations\|scope_feedback_annotations\|STORAGE_KEY =" | head -5
+== 2e09bfe:rapid-feedback.user.js ==
+45:  const STORAGE_KEY = 'scope_feedback_annotations';
+310:        data = localStorage.getItem('rapid_feedback_annotations');
+== 2e09bfe:scope-feedback.user.js (kept copy) ==
+fatal: path 'scope-feedback.user.js' does not exist in '2e09bfe'
+== 28a602f:userscripts/rapid-feedback.user.js ==
+README.md
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls test/node_modules/.bin 2>/dev/null | head -3; ls "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" 2>/dev/null && echo "chrome ok"; ls test/
+browsers
+escodegen
+esgenerate
+/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+chrome ok
+common.js
+node_modules
+package-lock.json
+package.json
+page.html
+page2.html
+repro-h1.js
+run-all.js
+run.js
+run2.js
+run3.js
+run4.js
+run5.js
+run6.js
+run7.js
+run8.js
+[0m$ [0mcd /Users/server/Development/rapid-feedback && for n in 29 13 35 5; do echo "=== #$n ==="; gh -R JavaGT/rapid-feedback issue view $n --json title,state,body,labels 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['title'],'|',d['state'],'|',[l['name'] for l in d['labels']]);print(d['body'][:1400])" 2>/dev/null || echo "(gh failed)"; done
+=== #29 ===
+[wave 2026-09-11] Subtraction batch: pre-envelope legacy format branches (:1049-1050) + dead componentStack alias (:621,734) | OPEN | []
+**Worth exploring** (wave 2026-09-11 forced-subtraction; extends #13's scope, cross-examined read-only at HEAD with 0 fake / 0 unpredicted breaks).
+
+Deletable now, per `rg` verification that nothing writes or reads them:
+- rapid-feedback.user.js:1049-1050 — pre-envelope stored-format branches (sibling of the legacy storage-key migration already ticketed in #13; same deletion should swallow both so #13 closes once)
+- rapid-feedback.user.js:621, :734 — `componentStack` written as a redundant alias, never read by any current code path
+
+~19 LOC in the userscript. **Implementation deferred** until the v5.18 dirty diff (#1) lands or resolves — same file.
+
+**Acceptance:** npm suite green (8/8) after deletion; a stored row saved by the pre-envelope format (if any exists in the wild) degrades gracefully per the existing corrupt-row skip.
+
+Full analysis: `artifacts/wave-2026-09-11/forced-subtraction.md`.
+=== #13 ===
+[wave 2026-09-10] Evaluate whether the legacy storage-key migration is still worth carrying | OPEN | []
+## Speculative deletion — evaluate whether this is worth doing (implementation is explicitly NOT the todo)
+`rapid-feedback.user.js:1056–1059` — `load()` falls back to the pre-rename key `rapid_feedback_annotations` and copies its payload into the current `STORAGE_KEY`. Three lines, dormant since the v2-era rename (the current envelope is versioned; the pre-envelope array shape is handled separately at line 1065).
+
+## GOES / STAYS / BREAKS
+- **GOES (if evaluated worthwhile):** the 4-line legacy-key fallback block.
+- **STAYS:** the versioned envelope, corrupt-row skip, and pre-envelope array handling — all current-format logic, all tested.
+- **BREAKS (the risk to weigh):** on any origin the author has not visited since the rename, old annotations would remain in localStorage but silently never load. No test covers the migration path (rg: the legacy key name appears exactly once in the repo). The flip side: the migration has already run on every origin the author actually uses, so the residual value may be zero.
+
+## Evidence
+- `rapid-feedback.user.js:1053–1073` (`load()`), legacy key referenced once repo-wide.
+- No harness coverage: `rg "rapid_feedback_annotations" test/` → nothing.
+
+## Decision question
+Is this migration path worth carrying for a personal tool whose author is the primary user? Options: (a) delete it, (b) keep it and add a one-line comment dating the decision, (c)
+=== #35 ===
+[wave 2026-09-12] Evaluate: harness interaction helpers — waitFor predicates, popover action/comment/submit, state snapshot | OPEN | []
+Wave 2026-09-12 0700, abstraction-zoom F3+F4+F5 (MEDIUM, MEDIUM, LOW). **Evaluate whether worth doing.**
+
+**Evidence:** hand-rolled `setTimeout` settling at ~50 sites (representative: run.js:17,55,72,79,86,102...; run6.js:11-14,47,61,75-79...; full list in report F3). Popover DOM mechanics (find-by-text/index, set value, dispatch input, click, settle) re-encoded at 30+ sites (F4: run.js:37-44,50-54,67-71...; run5.js:60-65,73-86,104-114...). Ad-hoc state snapshots (open/rows/comment/title/lost) re-mapped per suite (F5).
+
+**Proposed bricks:** `waitForHarness(page, condition, { timeoutMs, description })` + focused predicates (`waitForPopover`, `waitForAnnotationCount`) — replaces guessed sleeps with bounded polling; `setPopoverComment`, `clickPopoverAction(page, labelOrMatcher)`, `submitPopover({ comment, tab, styleInput })`; `readPopover(page, fields)` snapshot. Keep raw `delay(ms)` only for genuinely time-based behavior (e.g. run6's CDP slow-release).
+
+**Honest counterpoint (from the same report):** scenario-specific snapshots are sometimes clearer than a universal state object, and stable duplicated setup across independently-failing suites is not automatically a defect (forced-subtraction concurs). Highest-value slice if adopted: waitFor predicates — they also shrink flake diagnosis. Sequenced after #1 like the other harness work.
+
+Report: artifacts/wave-2026-09-12/abstraction
+=== #5 ===
+[wave 2026-09-10] Escape/draft lifecycle re-patched 4x, latest patch breaks run4 — evaluate one Escape-priority owner | OPEN | []
+## Friction theme
+Escape semantics (what closes what, when a draft survives) keep being re-patched, and each patch changes behavior another part of the codebase or test suite depended on.
+
+## Repetition evidence
+- v5.5 (@note, userscript header line 19): "SPA draft-close handling"
+- handleRouteChange draft-nuke on navigation (rapid-feedback.user.js:3051-3061) + hostile-muse P2 note that query-string replaceState churn throws drafts away
+- Dead-code guards: textarea stopPropagation/capture-Escape swallow at :2003-2007 can never fire because the document-capture keydown handler (:3002-3011) runs first — someone already tried to fix Escape-in-textarea and believed they had (hostile-omen P1 #1)
+- ea5e8b1 2026-09-06 "Draft safety: two-stage Escape" test + memo
+- Uncommitted v5.18 diff adds eventFromEditable() so Escape-in-textarea blurs instead of closing — and this change is what breaks test/run4.js:54 (see #1): run4's single Escape at :39 no longer closes the flow-1 popover, so flow-2's chord-click lands inside the stale selection and the /undo/i button never appears. Confirmed by worktree probe: after Escape, the popover still holds flow-1's svg#s1+svg#s2 selection and #c1 gets appended to it.
+
+## Root cause
+Escape handling is distributed across a document-capture keydown chain, per-textarea guards, route-change teardown, and now a two-stage/editable heuristic — four mechanisms w
+> deepseek-v4.1-flash · deepseek-flash
+Now let me empirically verify the data-loss question, since that's the core stake. Writing a throwaway probe outside the repo:
+[0m$ [0mmkdir -p /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review && cd /Users/server/Development/rapid-feedback && git show a0f4d02~1:rapid-feedback.user.js > /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/rf-pre-a0f4d02.js && git show HEAD:rapid-feedback.user.js > /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/rf-head.js && wc -l /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/*.js
+3146 /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/rf-head.js
+    3148 /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/rf-pre-a0f4d02.js
+    6294 total
+> deepseek-v4.1-flash · deepseek-flash
+[0m← [0mWrite /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/probe.js
+Created file successfully: /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/probe.js
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review && node probe.js "PRE-a0f4d02 (compat branch present)" ./rf-pre-a0f4d02.js 2>&1 | tail -12
+=== PRE-a0f4d02 (compat branch present) ===
+loaded count after seeding bare array : 2
+storage after load                     : { shape: 'envelope', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 3
+storage after save                     : { shape: 'envelope', n: 3 }
+PRE-ENVELOPE A survives?               : true
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review && node probe.js "HEAD (a0f4d02 applied)" ./rf-head.js 2>&1 | tail -12
+=== HEAD (a0f4d02 applied) ===
+loaded count after seeding bare array : 0
+storage after load                     : { shape: 'bare-array', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 1
+storage after save                     : { shape: 'envelope', n: 1 }
+PRE-ENVELOPE A survives?               : false
+> deepseek-v4.1-flash · deepseek-flash
+Decisive: the compat branch is load-bearing for on-disk data. Now verifying HEAD's suite independently and pinning the exposure window:
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log -1 --format='%h %ad %s' --date=short 2afe902 && git log -1 --format='%h %ad %s' --date=short a0f4d02 && git log -1 --format='%h %ad %s' --date=short 270fca0 && echo "== kept sleeps at HEAD with context ==" && git show HEAD:test/run.js | grep -n "setTimeout"
+2afe902 2026-08-22 v5.14: blind-plan improvements + draggable popover
+a0f4d02 2026-09-15 Subtraction: drop legacy storage-key migration + pre-envelope load branch (#29, #13)
+270fca0 2026-09-14 Land v5.18 lane + draft safety: offscreen recovery, dirty-aware Escape, edit-by-identity (#32, #38)
+== kept sleeps at HEAD with context ==
+55:  await new Promise(r => setTimeout(r, 100));
+72:  await new Promise(r => setTimeout(r, 100));
+79:  await new Promise(r => setTimeout(r, 100));
+86:  await new Promise(r => setTimeout(r, 200));
+198:  await new Promise(r => setTimeout(r, 200));
+211:  await new Promise(r => setTimeout(r, 150));
+278:  await new Promise(r => setTimeout(r, 250));
+282:  await new Promise(r => setTimeout(r, 150));
+[0m$ [0mcd /Users/server/Development/rapid-feedback/test && (npm test > /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite.log 2>&1; echo "rc=$?" >> /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite.log); tail -6 /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite.log
+PASS  removed target draft can be submitted
+
+2/2 checks passed
+
+8/8 suites passed
+rc=0
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== HEAD load/save/persist ==" && sed -n '1056,1083p' /tmp/rf-HEAD.js | cat -n | sed 's/^ *\([0-9]*\)\t/\1: /' | awk '{n=NR+1055; print n": "substr($0,index($0,": ")+2)}' | head -30; echo "== submit early-return + hide ==" && sed -n '1986,1995p;2005,2007p' /tmp/rf-HEAD.js; echo "== renderMembers/hidePopover/remove ==" && grep -n "function renderMembers\|selList.appendChild\|popoverEl.remove()\|function submit()" /tmp/rf-HEAD.js | head
+== HEAD load/save/persist ==
+1056: 	function load() {
+1057: 		try {
+1058: 			const data = localStorage.getItem(STORAGE_KEY);
+1059: 			if (!data) return;
+1060: 			const parsed = JSON.parse(data);
+1061: 			// One corrupt row shouldn't take the whole history down with it: keep the
+1062: 			// well-formed objects and let makeAnnotation fill in any missing fields.
+1063: 			const rows = parsed && typeof parsed === 'object' ? parsed.annotations : null;
+1064: 			if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+1065: 		} catch {}
+1066: 	}
+1067: 
+1068: 	// Versioned envelope: a future format change can migrate instead of guessing.
+1069: 	// Quota failures surface as a toast — silently losing a save would be worse.
+1070: 	function save() {
+1071: 		try {
+1072: 			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+1073: 		} catch {
+1074: 			showToast('Could not save — storage full');
+1075: 		}
+1076: 	}
+1077: 
+1078: 	function persist(fn) {
+1079: 		fn();
+1080: 		save();
+1081: 		if (panelRoot) renderPanel();
+1082: 	}
+1083: 
+== submit early-return + hide ==
+		function submit() {
+			let comment = ta.value.trim();
+			if (Object.keys(adjustedStyles).length) {
+				comment = comment ? comment + '\n\n' + Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n')
+					: Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n');
+			}
+			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+			const annotationData = buildAnnotationData(comment);
+			persist(() => {
+				// Replace by identity, not raw index: the panel can delete other
+			keepStyles();
+			hidePopover();
+			showToast('Saved');
+== renderMembers/hidePopover/remove ==
+1609:		function renderMembers() {
+1620:				selList.appendChild(status);
+1657:					selList.appendChild(row);
+1673:					selList.appendChild(row);
+1986:		function submit() {
+2181:		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== v5.14 load() full ==" && git show 2afe902:rapid-feedback.user.js | sed -n '660,700p' | cat -n | awk '{print NR+659": "$0}' | sed 's/\t/ /g'; echo "== v5.13 STORAGE key + save ==" && git show daf6b0f:rapid-feedback.user.js | sed -n '630,635p'
+== v5.14 load() full ==
+660:      1    return;
+661:      2   }
+662:      3   fallbackCopy(text);
+663:      4  }
+664:      5 
+665:      6  function load() {
+666:      7   try {
+667:      8    let data = localStorage.getItem(STORAGE_KEY);
+668:      9    if (!data) {
+669:     10     data = localStorage.getItem('rapid_feedback_annotations');
+670:     11     if (data) localStorage.setItem(STORAGE_KEY, data);
+671:     12    }
+672:     13    if (!data) return;
+673:     14    const parsed = JSON.parse(data);
+674:     15    // One corrupt row shouldn't take the whole history down with it: keep the
+675:     16    // well-formed objects and let makeAnnotation fill in any missing fields.
+676:     17    let rows;
+677:     18    if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)
+678:     19    else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.annotations)) rows = parsed.annotations;
+679:     20    if (Array.isArray(rows)) {
+680:     21     annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+681:     22     // Re-emit in the current envelope so the old shape doesn't linger.
+682:     23     save();
+683:     24    }
+684:     25   } catch {}
+685:     26  }
+686:     27 
+687:     28  // Versioned envelope: a future format change can migrate instead of guessing.
+688:     29  // Quota failures surface as a toast — silently losing a save would be worse.
+689:     30  function save() {
+690:     31   try {
+691:     32    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+692:     33   } catch {
+693:     34    showToast('Could not save — storage full');
+694:     35   }
+695:     36  }
+696:     37 
+697:     38  function persist(fn) {
+698:     39   fn();
+699:     40   save();
+700:     41   if (panelRoot) renderPanel();
+== v5.13 STORAGE key + save ==
+	}
+
+	function save() {
+		try { localStorage.setItem(STORAGE_KEY, JSON.stringify(annotations)); } catch {}
+	}
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && awk 'NR==1986||NR==1992||NR==1994||NR==2005||NR==2006||NR==2007||NR==2025||NR==2027||NR==2039||NR==2044||NR==2058||NR==1425||NR==1525||NR==1532||NR==1568||NR==1609||NR==1657||NR==1673||NR==2181||NR==127||NR==128{printf "%d: %s\n", NR, $0}' /tmp/rf-HEAD.js
+127: 	const STORAGE_KEY = 'scope_feedback_annotations';
+128: 	const STORAGE_VERSION = 1;
+1425: 	function showPopover(el, data, initial) {
+1525: 		const similarBtn = document.createElement('button');
+1532: 		selHead.appendChild(similarBtn);
+1568: 		function syncSelection() {
+1609: 		function renderMembers() {
+1657: 					selList.appendChild(row);
+1673: 					selList.appendChild(row);
+1986: 		function submit() {
+1992: 			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+1994: 			persist(() => {
+2005: 			keepStyles();
+2006: 			hidePopover();
+2007: 			showToast('Saved');
+2025: 		submitBtn.className = 'rf-btn rf-btn-primary';
+2027: 		submitBtn.addEventListener('click', submit);
+2039: 		root.appendChild(popover);
+2044: 		popoverEl = host;
+2058: 		syncSelection();
+2181: 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== run5 seed lines HEAD ==" && awk 'NR>=88 && NR<=112{printf "%d: %s\n", NR, $0}' <(git show HEAD:test/run5.js) && echo "== common.js waitFor lines ==" && awk 'NR>=54 && NR<=71{printf "%d: %s\n", NR, $0}' <(git show HEAD:test/common.js)
+== run5 seed lines HEAD ==
+88: 		check('no annotation was created from tool chrome', after === before, before + ' -> ' + after);
+89: 
+90: 		// --- A comment stays editable from a different page ---
+91: 		await page.evaluate(() => {
+92: 			window.__SCOPE_FEEDBACK_API__.clear();
+93: 			localStorage.setItem('scope_feedback_annotations', JSON.stringify({ version: 1, annotations: [{
+94: 				selector: 'div#c1.card', tag: 'div', text: 'First card', url: 'https://example.com/other',
+95: 				comment: 'from another page', category: 'general'
+96: 			}] }));
+97: 		});
+98: 		await page.reload();
+99: 		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
+100: 		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
+101: 		await new Promise(r => setTimeout(r, 200));
+102: 		const loaded = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.length);
+103: 		check('annotation from another page loads', loaded === 1, String(loaded));
+104: 		await page.evaluate(`(() => { ${PANEL}.querySelector('.rf-btn-icon[data-idx="0"]').click(); })()`);
+105: 		await new Promise(r => setTimeout(r, 200));
+106: 		const editable = await page.evaluate(`(() => {
+107: 			const cel = ${PANEL}.querySelector('.rf-card[data-idx="0"] .rf-comment');
+108: 			return { editable: cel?.getAttribute('contenteditable'), popover: !!${POP} }; })()`);
+109: 		check('editing an off-page annotation edits the comment in place, not the popover',
+110: 			editable.editable === 'true' && !editable.popover, JSON.stringify(editable));
+111: 		await page.evaluate(`(() => {
+112: 			const cel = ${PANEL}.querySelector('.rf-card[data-idx="0"] .rf-comment');
+== common.js waitFor lines ==
+54: // Bounded polling replaces guessed sleeps: evaluate `pageExpr` in the page
+55: // until truthy. A timeout throws with the description and last value so a
+56: // stall diagnoses itself instead of silently passing after a fixed nap.
+57: const delay = (ms) => new Promise(r => setTimeout(r, ms));
+58: async function waitFor(page, pageExpr, { timeoutMs = 2000, intervalMs = 25, description } = {}) {
+59: 	const deadline = Date.now() + timeoutMs;
+60: 	let last;
+61: 	while (Date.now() < deadline) {
+62: 		last = await page.evaluate(`(() => ${pageExpr})()`);
+63: 		if (last) return last;
+64: 		await delay(intervalMs);
+65: 	}
+66: 	throw new Error('waitFor timeout after ' + timeoutMs + 'ms: ' + (description || pageExpr.slice(0, 80)) + ' (last=' + JSON.stringify(last) + ')');
+67: }
+68: const waitForPopover = (page, opts) => waitFor(page, `!!(${POP})`, { description: 'popover open', ...opts });
+69: const waitForPopoverGone = (page, opts) => waitFor(page, `!(${POP})`, { description: 'popover closed', ...opts });
+70: 
+71: module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
+> deepseek-v4.1-flash · deepseek-flash
+Evidence is complete. Writing the report and its evidence logs:
+[0m← [0mWrite artifacts/wave-2026-09-16/review-landed-29-13-35.md
+Created file successfully: artifacts/wave-2026-09-16/review-landed-29-13-35.md
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "-- commits touching reviewed files after 7eed262:" && git log --oneline 7eed262..HEAD -- rapid-feedback.user.js test/common.js test/run.js && echo "(end)" && cp /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite.log artifacts/wave-2026-09-16/review-29-13-35-suite-head.log && wc -l artifacts/wave-2026-09-16/review-29-13-35-suite-head.log
+-- commits touching reviewed files after 7eed262:
+922d147 Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+(end)
+     177 artifacts/wave-2026-09-16/review-29-13-35-suite-head.log
+[0m$ [0mcd /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review && { echo "# commit 1 data-loss probe — seed = v5.13's bare array under scope_feedback_annotations, then one real Submit via the UI"; echo "# pre-commit build (a0f4d02~1):"; node probe.js "PRE-a0f4d02 (compat branch present)" ./rf-pre-a0f4d02.js; echo "# HEAD (a0f4d02 applied):"; node probe.js "HEAD (a0f4d02 applied)" ./rf-head.js; } > /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-16/review-29-13-35-probe.log 2>&1; cat /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-16/review-29-13-35-probe.log
+# commit 1 data-loss probe — seed = v5.13's bare array under scope_feedback_annotations, then one real Submit via the UI
+# pre-commit build (a0f4d02~1):
+
+=== PRE-a0f4d02 (compat branch present) ===
+loaded count after seeding bare array : 2
+storage after load                     : { shape: 'envelope', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 3
+storage after save                     : { shape: 'envelope', n: 3 }
+PRE-ENVELOPE A survives?               : true
+# HEAD (a0f4d02 applied):
+
+=== HEAD (a0f4d02 applied) ===
+loaded count after seeding bare array : 0
+storage after load                     : { shape: 'bare-array', n: 2 }
+popover opened for new annotation      : true
+api count after adding 1 annotation    : 1
+storage after save                     : { shape: 'envelope', n: 1 }
+PRE-ENVELOPE A survives?               : false
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git log -1 --format='%h %ad %s' --date=iso 922d147 && git merge-base --is-ancestor 922d147 HEAD && echo "IS ancestor of HEAD" ; echo "-- branch refs containing it:"; git branch -a --contains 922d147 2>/dev/null; echo "-- current HEAD/status:"; git log --oneline -3; git status --short | head -8; echo "-- files 922d147 touched:"; git show --stat --format=%s 922d147 | cat
+922d147 2026-09-16 07:47:02 +1200 Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+IS ancestor of HEAD
+-- branch refs containing it:
+* main
+-- current HEAD/status:
+460a0dc Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+922d147 Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+617ba18 Wave 2026-09-15 artifacts: quick-scan report, suite logs, automation receipt (#29/#13/#35 landed, #40 filed)
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+-- files 922d147 touched:
+Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+
+ rapid-feedback.user.js | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+> deepseek-v4.1-flash · deepseek-flash
+The tree moved under me mid-review (a later commit landed). Checking impact and re-verifying at current HEAD:
+[0m$ [0mcd /Users/server/Development/rapid-feedback && echo "== 922d147 diff ==" && git show 922d147 | tail -40 && echo "== does 460a0dc touch the three files? ==" && git show --stat --format=%s 460a0dc | cat && git show --stat --format=%s 460a0dc | grep -c "rapid-feedback.user.js\|test/common.js\|test/run.js" || echo "0 (none)"
+== 922d147 diff ==
+
+    Popover: name the centered fallback rect; drop no-op try/catch on plain assignment (#40)
+
+diff --git a/rapid-feedback.user.js b/rapid-feedback.user.js
+index e94ed99..d0083a7 100644
+--- a/rapid-feedback.user.js
++++ b/rapid-feedback.user.js
+@@ -1336,7 +1336,7 @@
+ 		savePopoverOffset();
+ 		if (popoverEl) {
+ 			const el = anchor?.getTarget?.();
+-			const rect = el?.isConnected ? getViewportRect(el) : { top: 80, bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), right: Math.max(8, (innerWidth + POPOVER_W) / 2) };
++			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+ 			placePopoverAt(popoverEl, rect, measurePopover());
+ 			anchor?.wake?.();
+ 		}
+@@ -1354,6 +1354,14 @@
+ 		return { top: clamp(bestY, pad, innerHeight - popoverH - pad), left: clamp(r.left, pad, innerWidth - popoverW - pad) };
+ 	}
+ 
++	// Rect used when the anchor target is gone (e.g. the page re-rendered under
++	// a dragged popover): horizontally centered with placePopover's 8px edge
++	// pad, near the top of the viewport. Keep edge policy in one place.
++	function centeredFallbackRect() {
++		const pad = 8;
++		return { top: 80, bottom: 80, left: Math.max(pad, (innerWidth - POPOVER_W) / 2), right: Math.max(pad, (innerWidth + POPOVER_W) / 2) };
++	}
++
+ 	// The popover and outline are position:fixed, so a scroll or layout shift slides
+ 	// them off their target. Re-project both against the live rect once per frame
+ 	// while the popover is open. When nothing changes for 20 consecutive frames
+@@ -1427,7 +1435,7 @@
+ 		// Pin the record being edited by identity so a panel delete that shifts
+ 		// array indices mid-edit cannot redirect Submit onto another annotation.
+ 		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
+-			try { initial.editRef = annotations[initial.editIndex]; } catch {}
++			initial.editRef = annotations[initial.editIndex];
+ 		}
+ 		const { host, root } = createShadowRoot();
+ 		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
+== does 460a0dc touch the three files? ==
+Delete oxalpha-redesign/ blind-rebuild experiment; comparison retained in .scratch (#11)
+
+ oxalpha-redesign/DESIGN.md              |  114 ---
+ oxalpha-redesign/rapid-feedback.user.js | 1537 -------------------------------
+ 2 files changed, 1651 deletions(-)
+1
+[0m$ [0mcd /Users/server/Development/rapid-feedback/test && A=$(git rev-parse HEAD); (npm test > /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite2.log 2>&1; echo "rc=$?" >> /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite2.log); B=$(git rev-parse HEAD); echo "HEAD before=$A after=$B"; tail -4 /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite2.log
+HEAD before=460a0dc830b7eade5bd0c974b9b98b35d4acde58 after=460a0dc830b7eade5bd0c974b9b98b35d4acde58
+2/2 checks passed
+
+8/8 suites passed
+rc=0
+> deepseek-v4.1-flash · deepseek-flash
+Tree advanced mid-review (HEAD now `460a0dc`, plus `922d147` touching the userscript). Verifying it doesn't affect the findings, then correcting the report's scope note:
+[0m← [0mEdit artifacts/wave-2026-09-16/review-landed-29-13-35.md
+Index: artifacts/wave-2026-09-16/review-landed-29-13-35.md
+===================================================================
+--- artifacts/wave-2026-09-16/review-landed-29-13-35.md
++++ artifacts/wave-2026-09-16/review-landed-29-13-35.md
+@@ -1,10 +1,14 @@
+ # Hostile review — landed commits a0f4d02 (#29, #13) and 7eed262 (#35 slice)
+ 
+ - **Session:** read-only. No file under review was edited, staged, or committed; foreign untracked files (`.scratch/*`, `test/repro-h1.js`) were not touched. Method: committed-state inspection (`git show`), call-site cross-examination, ticket cross-check, plus one throwaway Puppeteer probe run outside the repo.
+-- **Reviewed state:** `617ba18` (both commits are ancestors; no later commit touches `rapid-feedback.user.js`, `test/common.js`, or `test/run.js` — `git log --oneline 7eed262..HEAD -- rapid-feedback.user.js test/common.js test/run.js` → empty).
+-- **Independent verification of the 8-suite claim:** `cd test && npm test` at HEAD → `8/8 suites passed`, `rc=0`. Log: `artifacts/wave-2026-09-16/review-29-13-35-suite-head.log`. This confirms the prior evidence (`artifacts/wave-2026-09-15/suite-29-fix.log`, `suite-35.log`) and, importantly, shows the green suite does **not** cover the risk below.
++- **Reviewed state:** both commits are ancestors of the HEAD at review start (`617ba18`). The reviewed revisions are `a0f4d02:rapid-feedback.user.js`, `7eed262:test/common.js`, `7eed262:test/run.js`; **all line numbers below are from those revisions** (they equaled HEAD's revisions of those files when the review began). The shared checkout moved while this review ran — HEAD is now `460a0dc`, and `922d147` (2026-09-16 07:47) edits the userscript — see **F0** below.
++- **Independent verification of the 8-suite claim:** `cd test && npm test` → `8/8 suites passed`, `rc=0`, run at `460a0dc` with the sha unchanged before/after the run (log: `artifacts/wave-2026-09-16/review-29-13-35-suite-head.log`; also run green at `617ba18`). This confirms the prior evidence (`artifacts/wave-2026-09-15/suite-29-fix.log`, `suite-35.log`) and, importantly, shows the green suite does **not** cover the risk below.
+ 
++### F0 [scope note] A commit landed during the review; it does not disturb any finding
++
++`922d147` ("Popover: name the centered fallback rect; drop no-op try/catch on plain assignment", #40) has exactly two hunks, neither in the regions this review relies on: `@@ -1336` turns the reposition fallback rect into a named `centeredFallbackRect()`, and `@@ -1435` drops a `try/catch` around `initial.editRef = annotations[initial.editIndex]` in `showPopover`. It has no hunk in the popover attach/fill region (`root.appendChild(popover)` → `syncSelection()`), in `save()`/`hidePopover()`, or in either test file, so F2.1/F2.2 and the F1.1 probe (which used the pre-commit and pre-`922d147` texts) stand; only line numbers ≥ 1355 in the userscript shift by +8. `460a0dc` deletes `oxalpha-redesign/` only.
++
+ ## Verdicts
+ 
+ | Commit | Verdict | One-line reason |
+ | --- | --- | --- |
+
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cp /private/var/folders/71/2pg61l9d535gyhsjzvyj58kc0000gn/T/opencode/rf-review/head-suite2.log artifacts/wave-2026-09-16/review-29-13-35-suite-head.log && head -1 artifacts/wave-2026-09-16/review-29-13-35-suite-head.log && tail -3 artifacts/wave-2026-09-16/review-29-13-35-suite-head.log && ls -la artifacts/wave-2026-09-16/
+8/8 suites passed
+rc=0
+total 456
+drwxr-xr-x@ 9 server  staff     288 Sep 16 07:50 .
+drwxr-xr-x@ 8 server  staff     256 Sep 16 07:45 ..
+-rw-r--r--  1 server  staff     891 Sep 16 07:50 review-29-13-35-probe.log
+-rw-r--r--  1 server  staff    6767 Sep 16 07:51 review-29-13-35-suite-head.log
+-rw-r--r--  1 server  staff    8935 Sep 16 07:49 review-40-11.md
+-rw-r--r--@ 1 server  staff   36990 Sep 16 07:49 review-40-11.stdout.log
+-rw-r--r--  1 server  staff   16567 Sep 16 07:51 review-landed-29-13-35.md
+-rw-r--r--@ 1 server  staff  129889 Sep 16 07:51 review-landed.stdout.log
+-rw-r--r--@ 1 server  staff    6873 Sep 16 07:48 suite-full.log
+> deepseek-v4.1-flash · deepseek-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "@updateURL\|@downloadURL" /tmp/rf-HEAD.js && echo "== deleted-block old-side lines ==" && git show a0f4d02~1:rapid-feedback.user.js | sed -n '1055,1077p' | cat -n | awk '{print NR+1054": "$0}'
+29:// @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+30:// @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
+== deleted-block old-side lines ==
+1055:      1	
+1056:      2		function load() {
+1057:      3			try {
+1058:      4				let data = localStorage.getItem(STORAGE_KEY);
+1059:      5				if (!data) {
+1060:      6					data = localStorage.getItem('rapid_feedback_annotations');
+1061:      7					if (data) localStorage.setItem(STORAGE_KEY, data);
+1062:      8				}
+1063:      9				if (!data) return;
+1064:     10				const parsed = JSON.parse(data);
+1065:     11				// One corrupt row shouldn't take the whole history down with it: keep the
+1066:     12				// well-formed objects and let makeAnnotation fill in any missing fields.
+1067:     13				let rows;
+1068:     14				if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)
+1069:     15				else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.annotations)) rows = parsed.annotations;
+1070:     16				if (Array.isArray(rows)) {
+1071:     17					annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+1072:     18					// Re-emit in the current envelope so the old shape doesn't linger.
+1073:     19					save();
+1074:     20				}
+1075:     21			} catch {}
+1076:     22		}
+1077:     23
+> deepseek-v4.1-flash · deepseek-flash
+[0m← [0mEdit artifacts/wave-2026-09-16/review-landed-29-13-35.md
+Index: artifacts/wave-2026-09-16/review-landed-29-13-35.md
+===================================================================
+--- artifacts/wave-2026-09-16/review-landed-29-13-35.md
++++ artifacts/wave-2026-09-16/review-landed-29-13-35.md
+@@ -26,9 +26,9 @@
+ Chain of evidence:
+ 
+ 1. `HEAD:rapid-feedback.user.js:127` — `const STORAGE_KEY = 'scope_feedback_annotations';` (unchanged since the v4.0 file, `2e09bfe~1:scope-feedback.user.js:29`).
+ 2. v5.13's writer put a **bare array** under that key: `daf6b0f:rapid-feedback.user.js:633` — `localStorage.setItem(STORAGE_KEY, JSON.stringify(annotations))`.
+-3. v5.14 introduced the envelope **and** the compat reader in the same commit: `2afe902:rapid-feedback.user.js:677` — `if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)`, plus `:679-683` which re-emitted the envelope via `save()` on load. So the deleted block was the migration path for every install that saved before v5.14.
++3. v5.14 introduced the envelope **and** the compat reader in the same commit: `2afe902:rapid-feedback.user.js:677` — `if (Array.isArray(parsed)) rows = parsed; // pre-envelope format (or migrated legacy)`, plus `:679-683` which re-emitted the envelope via `save()` on load. So the deleted block was the migration path for every install that saved before v5.14. The deleted lines are `a0f4d02~1:rapid-feedback.user.js:1068` (the array branch) and `:1073` (the re-emit `save()`).
+ 4. `HEAD:rapid-feedback.user.js:1056-1066` — `load()` now reads only `parsed.annotations` (`:1063`); a bare array makes `rows === null` (`:1063`) and nothing loads.
+ 5. `HEAD:rapid-feedback.user.js:1070-1076` — `save()` writes `{ version: 1, annotations }` to the same key (`:1072`), and it is reached from every mutation (`persist()` `:1078-1080`; panel edit `:2329`, delete `:2350`, add `:2399`, clear `:3127`; popover Submit `:1994`).
+ 
+ Reproduction (throwaway probe, outside the repo; raw output in `artifacts/wave-2026-09-16/review-29-13-35-probe.log`). Seed = exactly what v5.13 wrote (bare array, 2 rows) under `scope_feedback_annotations`, then load the userscript, then submit one new comment through the real UI:
+
+> deepseek-v4.1-flash · deepseek-flash
+[0m✗ [0mEdit artifacts/wave-2026-09-16/review-landed-29-13-35.md failed
+[91m[1mError: [0mCould not find oldString in /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-16/review-landed-29-13-35.md. It must match exactly, including whitespace and indentation.
+> deepseek-v4.1-flash · deepseek-flash
+[0m← [0mEdit artifacts/wave-2026-09-16/review-landed-29-13-35.md
+Index: artifacts/wave-2026-09-16/review-landed-29-13-35.md
+===================================================================
+--- artifacts/wave-2026-09-16/review-landed-29-13-35.md
++++ artifacts/wave-2026-09-16/review-landed-29-13-35.md
+@@ -39,9 +39,9 @@
+ | HEAD (branch deleted) | **0** | bare array, n=2 (invisible) | envelope, **n=1** | **no — overwritten** |
+ 
+ So the failure mode is not a graceful skip: the annotations are invisible, and the first save of any kind permanently replaces them. This is the data-loss path the stakes asked to flag, and it is silent on both ends (no toast; `:1073-1075` only toasts on quota failure).
+ 
+-Exposure window is real, not theoretical: v5.14 landed 2026-08-22 and `a0f4d02` landed 2026-09-15, so any origin the user last annotated before 2026-08-22 and has not re-opened with v5.14–v5.17 still holds a bare array. The script auto-updates from `main` (`rapid-feedback.user.js:27-28` `@updateURL`/`@downloadURL`), so the upgrade arrives without the user doing anything. Annotations are per-origin, and per-origin staleness across weeks is normal for this tool.
++Exposure window is real, not theoretical: v5.14 landed 2026-08-22 and `a0f4d02` landed 2026-09-15, so any origin the user last annotated before 2026-08-22 and has not re-opened with v5.14–v5.17 still holds a bare array. The script auto-updates from `main` (`rapid-feedback.user.js:29-30` `@updateURL`/`@downloadURL`), so the upgrade arrives without the user doing anything. Annotations are per-origin, and per-origin staleness across weeks is normal for this tool.
+ 
+ ### F1.2 [acceptance not met] #29's stated acceptance is the opposite of the shipped behaviour
+ 
+ #29 acceptance, verbatim: *"a stored row saved by the pre-envelope format (if any exists in the wild) degrades gracefully per the existing corrupt-row skip."*
+
+> deepseek-v4.1-flash · deepseek-flash
+[0m→ [0mRead artifacts/wave-2026-09-16/review-landed-29-13-35.md [90m[limit=60][0m
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git status --short && echo "--- any tracked modification? ---" && git diff --stat | tail -3
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+?? .scratch/quick-scan-2026-09-10.md
+?? artifacts/automation-receipts/2026-09-16/
+?? artifacts/wave-2026-09-16/
+?? test/repro-h1.js
+--- any tracked modification? ---
+> deepseek-v4.1-flash · deepseek-flash
+[0m→ [0mRead artifacts/wave-2026-09-16/review-landed-29-13-35.md [90m[offset=61, limit=70][0m
+> deepseek-v4.1-flash · deepseek-flash
+[0m← [0mEdit artifacts/wave-2026-09-16/review-landed-29-13-35.md
+Index: artifacts/wave-2026-09-16/review-landed-29-13-35.md
+===================================================================
+--- artifacts/wave-2026-09-16/review-landed-29-13-35.md
++++ artifacts/wave-2026-09-16/review-landed-29-13-35.md
+@@ -1,8 +1,8 @@
+ # Hostile review — landed commits a0f4d02 (#29, #13) and 7eed262 (#35 slice)
+ 
+ - **Session:** read-only. No file under review was edited, staged, or committed; foreign untracked files (`.scratch/*`, `test/repro-h1.js`) were not touched. Method: committed-state inspection (`git show`), call-site cross-examination, ticket cross-check, plus one throwaway Puppeteer probe run outside the repo.
+-- **Reviewed state:** both commits are ancestors of the HEAD at review start (`617ba18`). The reviewed revisions are `a0f4d02:rapid-feedback.user.js`, `7eed262:test/common.js`, `7eed262:test/run.js`; **all line numbers below are from those revisions** (they equaled HEAD's revisions of those files when the review began). The shared checkout moved while this review ran — HEAD is now `460a0dc`, and `922d147` (2026-09-16 07:47) edits the userscript — see **F0** below.
++- **Reviewed state:** both commits are ancestors of the HEAD at review start (`617ba18`). The reviewed revisions are `a0f4d02:rapid-feedback.user.js`, `7eed262:test/common.js`, `7eed262:test/run.js`; **all line numbers below are from those revisions** (they equaled HEAD's revisions of those files when the review began), so `HEAD:<file>:<line>` citations mean that reviewed revision, not today's HEAD. The shared checkout moved while this review ran — HEAD is now `460a0dc`, and `922d147` (2026-09-16 07:47) edits the userscript — see **F0** below.
+ - **Independent verification of the 8-suite claim:** `cd test && npm test` → `8/8 suites passed`, `rc=0`, run at `460a0dc` with the sha unchanged before/after the run (log: `artifacts/wave-2026-09-16/review-29-13-35-suite-head.log`; also run green at `617ba18`). This confirms the prior evidence (`artifacts/wave-2026-09-15/suite-29-fix.log`, `suite-35.log`) and, importantly, shows the green suite does **not** cover the risk below.
+ 
+ ### F0 [scope note] A commit landed during the review; it does not disturb any finding
+ 
+
+> deepseek-v4.1-flash · deepseek-flash
+a0f4d02: BLOCK — deleted branch was the only reader of the bare-array format v≤5.13 wrote to the same key. Reproduced: 2 seeded rows load as 0, next Submit overwrites them (fix F1.7); #29 acceptance unmet.
+7eed262: APPROVED — minors: 14 not 15 conversions; abort-on-timeout hides later suites; unused waitFor export. Suite 8/8 re-verified at 460a0dc.
+Report: artifacts/wave-2026-09-16/review-landed-29-13-35.md (+ probe/suite logs). T1–T5 drafted, not filed (read-only).
