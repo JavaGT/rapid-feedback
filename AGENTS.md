@@ -5,7 +5,7 @@ Settled facts for agents working in this repo. Feature/install docs live in [REA
 ## What is what
 
 - `rapid-feedback.user.js` (repo root) is the shipped Tampermonkey userscript and the single source of truth. The `oxalpha-redesign/`, `luna-redesign/`, and `deepseek-redesign/` one-shot experiments were deleted (#11, #39); their comparisons remain in `.scratch/comparison-oxalpha.md`, `.scratch/comparison.md`, and `.scratch/comparison-deepseek.md`.
-- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run with `cd test && npm install && npm test`; override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
+- `test/` holds the dev-only Puppeteer harness. `test/run-all.js` wires the eight suites: `test/run.js` plus `test/run2.js`–`test/run8.js` (no `run1.js`). Run from the repo root with `npm --prefix test install && npm --prefix test test` (or a `(cd test && npm test)` subshell) — a bare `cd test` persists into later shell calls and breaks the next repo-root git command (#45); override the Chrome binary with `RAPID_FEEDBACK_CHROME`. Tests introspect the closed shadow roots, so the harness force-opens them (`test/common.js`).
 - `.scratch/` is per-agent working space (notes, plans, repro pages). Untracked files anywhere — including `test/repro-h1.js` — may be another agent's in-flight work: read-only until claimed.
 
 ## Worktree discipline
