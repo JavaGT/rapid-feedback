@@ -1060,7 +1060,10 @@
 			const parsed = JSON.parse(data);
 			// One corrupt row shouldn't take the whole history down with it: keep the
 			// well-formed objects and let makeAnnotation fill in any missing fields.
-			const rows = parsed && typeof parsed === 'object' ? parsed.annotations : null;
+			// Installs from before v5.14 saved a bare array under this key — keep
+			// reading it so an upgrade's first save doesn't overwrite their
+			// annotations; the save itself re-emits the envelope.
+			const rows = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === 'object' ? parsed.annotations : null);
 			if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
 		} catch {}
 	}

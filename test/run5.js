@@ -90,10 +90,10 @@ module.exports = async function run() {
 		// --- A comment stays editable from a different page ---
 		await page.evaluate(() => {
 			window.__SCOPE_FEEDBACK_API__.clear();
-			localStorage.setItem('scope_feedback_annotations', JSON.stringify({ version: 1, annotations: [{
+			localStorage.setItem('scope_feedback_annotations', JSON.stringify([{
 				selector: 'div#c1.card', tag: 'div', text: 'First card', url: 'https://example.com/other',
 				comment: 'from another page', category: 'general'
-			}] }));
+			}]));
 		});
 		await page.reload();
 		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
