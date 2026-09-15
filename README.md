@@ -83,9 +83,8 @@ This repository is the single source of truth. The script was previously distrib
 The dev-only Puppeteer harness runs the userscript against `test/page.html` in headless Chrome:
 
 ```sh
-cd test
-npm install
-npm test
+npm --prefix test install
+npm --prefix test test
 ```
 
 It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
