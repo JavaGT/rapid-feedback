@@ -119,7 +119,6 @@
 		{ key: 'opacity', label: 'Opacity', isRange: true, min: 0, max: 1, step: 0.05 }
 	];
 	const STORAGE_KEY = 'scope_feedback_annotations';
-	const STORAGE_VERSION = 1;
 	const POPOVER_OFFSET_KEY = 'rf_popover_offset_v1';
 	const DRAG_THRESHOLD_PX = 4;
 	const TEXT_MAX = 150;
@@ -1062,11 +1061,10 @@
 		} catch {}
 	}
 
-	// Versioned envelope: a future format change can migrate instead of guessing.
 	// Quota failures surface as a toast — silently losing a save would be worse.
 	function save() {
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, annotations }));
+			localStorage.setItem(STORAGE_KEY, JSON.stringify({ annotations }));
 		} catch {
 			showToast('Could not save — storage full');
 		}
