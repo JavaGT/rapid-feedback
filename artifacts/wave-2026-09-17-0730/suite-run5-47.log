@@ -1,0 +1,16 @@
+PASS  a concealed FAB does not swallow ordinary clicks
+PASS  a concealed FAB does not open the panel
+PASS  chord-click passes through the FAB to the element beneath
+PASS  the FAB did not open the panel instead
+PASS  chrome becomes interactive again after chord release
+PASS  popover is interactive while no chord is held
+PASS  chord-click with popover open adds to the selection
+PASS  growing the selection keeps the draft comment
+PASS  chord-click on the panel never targets tool chrome
+PASS  no annotation was created from tool chrome
+PASS  annotation from another page loads
+PASS  editing an off-page annotation edits the comment in place, not the popover
+PASS  the off-page comment edit persists
+
+13/13 checks passed
+RUN5-SUITE PASS

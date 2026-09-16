@@ -1,0 +1,59 @@
+PASS  markers appear while accumulating
+PASS  popover lists all 3 members
+PASS  primary marked first
+PASS  count reads 3 elements
+PASS  title shows +2
+PASS  zoom row hidden for group
+PASS  markers persist while popover open (2 non-primary)
+PASS  style preview hits all 3 selected
+PASS  style preview skips unselected
+PASS  removed member reverts its preview
+PASS  remaining members keep preview
+PASS  list shrinks to 2 after remove
+PASS  marker removed too
+PASS  promote reorders the list
+PASS  add-element banner shown
+PASS  added element joins the list
+PASS  pending tweak carries onto the new member
+PASS  annotation saved
+PASS  saved annotation keeps 2 other members
+PASS  member refs carry selector + text
+
+--- API keys: ["markdown","json","annotations","clear","openPanel","setProjectRoot"] ---
+--- MARKDOWN ---
+# Feedback — RF Harness
+Page: file:///Users/server/Development/rapid-feedback/test/page.html
+Env: 1200×800 · Chrome 153 on macOS
+
+## 1. [GENERAL] Second card
+> Second card
+Align these cards
+
+padding: 40px;
+Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Where: div#c2.card
+Rect: 242×162
+Group: 3 elements (this + 2)
+  • div#c1 "First card"
+    Where: div#c1.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+  • div#c4 "Fourth card"
+    Where: div#c4.card
+    Looks: display=block; font-size=16px; color=rgb(0, 0, 0); background-color=rgb(238, 238, 238); padding=40px; border=1px solid rgb(153, 153, 153)
+Tweak (all 3 elements):
+  padding: 40px;
+----------------
+PASS  selector skips variant/arbitrary classes
+PASS  svelte source maps file:line + route-aware stack
+PASS  nested Svelte component trail keeps leaf-to-root order
+PASS  editor deep link carries root, line and column
+PASS  exports include computed visual context
+PASS  select similar groups by component file
+PASS  group members retain their component trail
+PASS  shadow-root targets inherit host component context
+PASS  accessibility context includes descriptions and states
+PASS  hostile __svelte_meta getter fails soft
+PASS  prod-build disclosure when dev meta absent
+
+31/31 checks passed
+RUN-SUITE PASS
