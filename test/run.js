@@ -104,7 +104,7 @@ module.exports = async function run() {
   const out = await page.evaluate(() => {
     const api = window.__SCOPE_FEEDBACK_API__;
     const parsed = JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => /feedback/i.test(k))));
-    // Storage carries a version envelope since v5.14.
+    // Storage carries an { annotations } envelope since v5.14; older installs saved a bare array.
     const rows = Array.isArray(parsed) ? parsed : parsed?.annotations;
     return { raw: rows, apiKeys: api ? Object.keys(api) : null };
   });
