@@ -14,13 +14,8 @@
 // @note         v5.9: a concealed floating button no longer intercepts clicks in the corner it sits in
 // @note         v5.8: @namespace is now javagrant.ac.nz, no longer tied to the Scope subdomain
 // @note         v5.7: canonical home moved from the gist to github.com/JavaGT/rapid-feedback; this build re-points update checks there
-// @note         v5.4: editable multi-select list (remove/promote/add members), markers persist while the popover is open, style tweaks preview across the whole selection, every member exported with its own selector
 // @note         v5.6: chord-clicking with the popover open grows the selection instead of discarding the draft; tool chrome is click-through while the chord is held or a pick mode is running, so it never covers what you meant to click; nothing the tool renders can be annotated; comments stay editable in place from any page
 // @note         v5.5: saved selections reopen for full editing with missing-member disclosure, direct-sibling similar selection and undo, primary guidance, distinct duplicate labels, and SPA draft-close handling
-// @note         v5.3.1: component chain shows file names instead of full paths
-// @note         v5.3: cancel reverts live style edits, Reset pairs inputs correctly, popover/outline follow scroll, zoom re-renders header + sibling nav, group reuses the main popover, shorter unique selectors, throttled hover
-// @note         v5.2: destination picking is a real selection mode (plain click, hint banner, Esc cancels, draft preserved); fixed destination recording the source selector
-// @note         v5.1: zoom arrows show outline + reposition popover; hideOutline on popover close
 // @author       JavaGT
 // @match        *://*/*
 // @grant        none
@@ -28,7 +23,6 @@
 // @supportURL   https://github.com/JavaGT/rapid-feedback/issues
 // @updateURL    https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
 // @downloadURL  https://raw.githubusercontent.com/JavaGT/rapid-feedback/main/rapid-feedback.user.js
-// @note         v5.0: selector overhaul (utility-class filter, high-signal attrs, dynamic depth), chord-hold target preview + element zoom, grouping & relocation, tabbed comment-first popover, auto-reposition, Shadow DOM isolation, export clarity
 // ==/UserScript==
 
 (function () {
