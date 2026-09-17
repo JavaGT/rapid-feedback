@@ -3,7 +3,10 @@ const fs = require('fs');
 const path = require('path');
 
 const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
-const CHROME = process.env.RAPID_FEEDBACK_CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const BROWSER = process.env.RAPID_FEEDBACK_BROWSER || 'chrome';
+const EXECUTABLE = process.env.RAPID_FEEDBACK_EXECUTABLE || process.env.RAPID_FEEDBACK_CHROME || (BROWSER === 'firefox'
+	? '/Applications/Firefox.app/Contents/MacOS/firefox'
+	: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
 const POP = `(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
 // Selection markers live in a shadow root, so count them across all chrome roots.
 const MARKERS = `(() => { let n = 0; for (const h of [...document.body.children, ...document.documentElement.children]) n += h.shadowRoot?.querySelectorAll('.rf-marker').length || 0; return n; })()`;
@@ -24,7 +27,7 @@ function createReporter() {
 }
 
 async function withPage(run) {
-	const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
+	const browser = await puppeteer.launch({ browser: BROWSER, executablePath: EXECUTABLE, headless: true, args: BROWSER === 'firefox' ? ['-no-remote'] : ['--no-sandbox'] });
 	try {
 		const page = await browser.newPage();
 		await page.setViewport({ width: 1200, height: 800 });

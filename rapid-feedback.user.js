@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.18
+// @version      5.19
+// @note         v5.19: chord picking includes click-through text and guidance, so transcript gutter hints no longer select the entire editor
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
 // @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
@@ -2744,17 +2745,26 @@
 		return (alpha >= 0.35 && !(el.textContent || '').trim());
 	}
 
+	// Inspection targets painted elements, not just interactive ones. Briefly let
+	// native hit-testing see pointer-transparent guidance/decorations, then remove
+	// the override synchronously (before any page event can use it). The browser
+	// still owns paint order, clipping and transforms; no bounding-box guessing.
+	function inspectionElementsAt(ownerDoc, x, y) {
+		const style = ownerDoc.createElement('style');
+		style.textContent = `* { pointer-events: auto !important; } [${RF_CHROME_ATTR}] { pointer-events: none !important; }`;
+		try {
+			(ownerDoc.head || ownerDoc.documentElement).appendChild(style);
+			return ownerDoc.elementsFromPoint(x, y);
+		} finally {
+			style.remove();
+		}
+	}
+
 	function resolveChordTarget(e, hint) {
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
 		if (isRfChrome(target)) return null;
 		const ownerDoc = target?.ownerDocument || document;
-		if (target === ownerDoc.body || target === ownerDoc.documentElement) {
-			// The click-through design drops chord clicks on our own chrome onto the
-			// page root — annotating <html> is never useful, and a full-viewport
-			// popover for it is exactly the "popup gone wrong" failure mode.
-			return null;
-		}
 		const isPierceLayer = (el) => {
 			if (!el || el.nodeType !== 1) return false;
 			// Known overlay class names stay a fast-path signal; the shell heuristic
@@ -2762,17 +2772,21 @@
 			if (el.matches?.('.modal-overlay,.drawer-overlay,.sheet-overlay')) return true;
 			return isOverlayShell(el, ownerDoc);
 		};
-		if (target && isPierceLayer(target) && typeof ownerDoc.elementsFromPoint === 'function') {
-			for (const el of ownerDoc.elementsFromPoint(e.clientX, e.clientY)) {
+		if (typeof ownerDoc.elementsFromPoint === 'function') {
+			for (const el of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
 				if (el.nodeType !== 1) continue;
 				if (isPierceLayer(el)) continue;
 				if (isRfChrome(el)) continue;
 				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
-				target = el;
+				// Document hit-testing retargets shadow descendants to their host.
+				// Preserve the more precise composed-path target in that case.
+				let root = target?.getRootNode?.();
+				while (root?.host && root.host !== el) root = root.host.getRootNode();
+				if (root?.host !== el) target = el;
 				break;
 			}
 		}
-		if (!target || target.nodeType !== 1) return null;
+		if (!target || target.nodeType !== 1 || target === ownerDoc.body || target === ownerDoc.documentElement) return null;
 		return target;
 	}
 

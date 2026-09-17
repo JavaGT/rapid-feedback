@@ -5,7 +5,7 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 ## v5 highlights
 
 - **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (aria-label, name, href), shortened to the smallest chain that still resolves uniquely
-- **Chord-hold target preview** — pulsing blue glow outline shows what you're about to click
+- **Chord-hold target preview** — pulsing blue glow outline shows what you're about to click. Picking includes click-through guidance (such as transcript gutter hints), without changing ordinary page clicks
 - **Element zoom** — ▲/▼ for parent/child and ◀/▶ for siblings; the popover header re-renders so you always see what you're about to capture
 - **Multi-select** — hold chord, click multiple elements (each marked with a numbered green badge showing its order), release → one popover for the whole set. The selection is an editable list: drop a member, promote one to primary, `⧉ Select similar` to grab the repeated siblings, or `+ Add element` to pick another. Chord-clicking again with the popover open grows the selection rather than starting over, so the draft survives. Markers stay on the page throughout, and a style tweak previews across every selected element
 - **Chrome that gets out of the way** — while the chord is held or a pick mode is running, everything the tool renders becomes click-through, so the FAB, panel or popover can never swallow a click meant for the element beneath. Nothing the tool renders can itself be annotated
@@ -88,3 +88,5 @@ npm --prefix test test
 ```
 
 It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
+
+Run the click-through targeting regression in Firefox with `RAPID_FEEDBACK_BROWSER=firefox node test/run9.js`. It defaults to the macOS Firefox application; set `RAPID_FEEDBACK_EXECUTABLE` to override the browser path.
