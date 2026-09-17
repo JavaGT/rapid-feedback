@@ -2772,7 +2772,7 @@
 			if (el.matches?.('.modal-overlay,.drawer-overlay,.sheet-overlay')) return true;
 			return isOverlayShell(el, ownerDoc);
 		};
-		if (typeof ownerDoc.elementsFromPoint === 'function') {
+		if (typeof ownerDoc.elementsFromPoint === 'function' && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
 			for (const el of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
 				if (el.nodeType !== 1) continue;
 				if (isPierceLayer(el)) continue;
