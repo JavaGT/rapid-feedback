@@ -124,6 +124,10 @@
 	const DRAG_THRESHOLD_PX = 4;
 	const TEXT_MAX = 150;
 	const POPOVER_W = 320;
+	// One place for the popover's viewport-edge policy: gap to the anchor target
+	// and pad to the viewport edges. Shared by placePopover's branches, the drag
+	// clamp, and the centered fallback rect.
+	const POPOVER_INSETS = { gap: 8, pad: 8 };
 	const PANEL_W = 380;
 	const SIMILAR_MAX = 50;
 	const COMPONENT_MAX = 8;
@@ -1326,13 +1330,14 @@
 	// Place the popover for `targetRect`: honor the user's dragged offset when one
 	// is set (clamped to the viewport), otherwise the automatic placement.
 	function placePopoverAt(host, targetRect, popoverH) {
-		if (popoverOffset) {
-			const h = popoverH || measurePopover();
-			applyPopoverPosition(host,
-				clamp(popoverOffset.y, 8, Math.max(8, innerHeight - h - 8)),
-				clamp(popoverOffset.x, 8, Math.max(8, innerWidth - POPOVER_W - 8)));
-			return;
-		}
+	if (popoverOffset) {
+		const h = popoverH || measurePopover();
+		const { pad } = POPOVER_INSETS;
+		applyPopoverPosition(host,
+			clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
+			clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
+		return;
+	}
 		const pos = placePopover(targetRect, POPOVER_W, popoverH);
 		applyPopoverPosition(host, pos.top, pos.left);
 	}
@@ -1352,7 +1357,7 @@
 	}
 
 	function placePopover(targetRect, popoverW, popoverH) {
-		const gap = 8, pad = 8;
+		const { gap, pad } = POPOVER_INSETS;
 		const r = targetRect;
 		if (r.bottom + popoverH + gap + pad <= innerHeight) return { top: r.bottom + gap, left: clamp(r.left, pad, innerWidth - popoverW - pad) };
 		if (r.top - popoverH - gap >= pad) return { top: r.top - popoverH - gap, left: clamp(r.left, pad, innerWidth - popoverW - pad) };
@@ -1363,10 +1368,10 @@
 	}
 
 	// Rect used when the anchor target is gone (e.g. the page re-rendered under
-	// a dragged popover): horizontally centered with placePopover's 8px edge
-	// pad, near the top of the viewport. Keep edge policy in one place.
+	// a dragged popover): horizontally centered with the shared edge pad, near
+	// the top of the viewport. Edge policy lives in POPOVER_INSETS.
 	function centeredFallbackRect() {
-		const pad = 8;
+		const { pad } = POPOVER_INSETS;
 		return { top: 80, bottom: 80, left: Math.max(pad, (innerWidth - POPOVER_W) / 2), right: Math.max(pad, (innerWidth + POPOVER_W) / 2) };
 	}
 
