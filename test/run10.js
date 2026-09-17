@@ -5,11 +5,15 @@
 const { POP, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
 
 const GAP = 8, PAD = 8, POPOVER_W = 320;
-// A pristine draft closes on Escape, but the popover may autofocus its comment
-// box — then the first Escape only blurs. Retry once.
+// A pristine draft closes on the first Escape; the script's own handler only
+// blurs when the draft holds real work. So retry only when the comment box is
+// dirty — a pristine popover surviving Escape must stay a failure, not be
+// masked by a second press.
 const close = async (page) => {
 	await page.keyboard.press('Escape');
 	try { await waitForPopoverGone(page, { timeoutMs: 800, description: 'popover closed' }); return; } catch {}
+	const dirty = await page.evaluate(`(() => { const p = ${POP}; return !!(p && p.querySelector('.rf-popover-ta')?.value); })()`);
+	if (!dirty) throw new Error('pristine popover survived first Escape');
 	await page.keyboard.press('Escape');
 	await waitForPopoverGone(page, { timeoutMs: 800, description: 'popover closed on second Escape' });
 };
@@ -41,7 +45,7 @@ async function readGeo(page, id) {
 	return page.evaluate(GEO.replace('PLACEHOLDER', id));
 }
 
-const near = (a, b) => Math.abs(a - b) <= 1;
+const near = (a, b) => Math.abs(a - b) <= 0.5;
 
 module.exports = async function run10() {
 	const { check, finish } = createReporter();
@@ -79,7 +83,28 @@ module.exports = async function run10() {
 		await matrixCase('placement matrix: full-height target at left', 1200, 800, [100, 0, 100, 800], 'right');
 		await matrixCase('placement matrix: full-height target at right', 1200, 800, [1100, 0, 100, 800], 'left');
 		await matrixCase('placement matrix: target fills viewport', 1200, 800, [0, 0, 1200, 800], 'overlap');
-		await matrixCase('placement matrix: lower-half target collapses upward with clamp', 1200, 800, [0, 500, 1200, 300], 'overlap');
+		// Overlap's lower-half arm: needs r.top > ih/2 (else upper arm) and
+		// r.top < h + gap + pad (else the above branch fires first — its formula
+		// coincides with the unclamped lower arm). That window always clamps to
+		// the pad, which is the invariant this case pins.
+		{
+			const id = 'pa6';
+			await page.setViewport({ width: 1200, height: 800 });
+			await openOn(page, [0, 406, 1200, 300], id);
+			await new Promise(r => setTimeout(r, 200));
+			await page.setViewport({ width: 1200, height: 799 });
+			await new Promise(r => setTimeout(r, 100));
+			const g = await readGeo(page, id);
+			const inWindow = g.at > g.ih / 2 && g.at < g.h + GAP + PAD;
+			const bestY = g.at - g.h - GAP;
+			const expectedTop = Math.min(Math.max(bestY, PAD), g.ih - g.h - PAD);
+			check('placement matrix: overlap lower-half arm clamps to pad (preconditions ' + JSON.stringify({ at: g.at, h: g.h, inWindow }) + ')',
+				inWindow && near(g.pt, expectedTop) && near(g.pt, PAD) && near(g.pl, PAD),
+				`expected (${expectedTop},${PAD}) got (${g.pt},${g.pl})`);
+			await page.evaluate((id) => document.getElementById(id)?.remove(), id);
+			await close(page);
+			await waitForPopoverGone(page, { description: 'popover closed after lower-arm case' });
+		}
 		await matrixCase('placement matrix: narrow viewport pads the left clamp', 800, 600, [700, 50, 80, 40], 'below');
 
 		// Centered fallback: with the anchor target removed, Alt+Shift+R reset must

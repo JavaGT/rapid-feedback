@@ -1330,14 +1330,14 @@
 	// Place the popover for `targetRect`: honor the user's dragged offset when one
 	// is set (clamped to the viewport), otherwise the automatic placement.
 	function placePopoverAt(host, targetRect, popoverH) {
-	if (popoverOffset) {
-		const h = popoverH || measurePopover();
-		const { pad } = POPOVER_INSETS;
-		applyPopoverPosition(host,
-			clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
-			clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
-		return;
-	}
+		if (popoverOffset) {
+			const h = popoverH || measurePopover();
+			const { pad } = POPOVER_INSETS;
+			applyPopoverPosition(host,
+				clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
+				clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
+			return;
+		}
 		const pos = placePopover(targetRect, POPOVER_W, popoverH);
 		applyPopoverPosition(host, pos.top, pos.left);
 	}
@@ -2229,9 +2229,10 @@
 			const dy = point.y - startClient.y;
 			if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
 			moved = true;
+			const { pad } = POPOVER_INSETS;
 			popoverOffset = {
-				x: clamp(base.x + dx, 8, Math.max(8, innerWidth - POPOVER_W - 8)),
-				y: clamp(base.y + dy, 8, Math.max(8, innerHeight - measurePopover() - 8)),
+				x: clamp(base.x + dx, pad, Math.max(pad, innerWidth - POPOVER_W - pad)),
+				y: clamp(base.y + dy, pad, Math.max(pad, innerHeight - measurePopover() - pad)),
 			};
 			applyPopoverPosition(host, popoverOffset.y, popoverOffset.x);
 		};
@@ -2259,10 +2260,12 @@
 	}
 
 	// Where the automatic placement would put the popover right now — the drag
-	// baseline for the first drag before any offset exists.
+	// baseline for the first drag before any offset exists. Mirrors the fallback
+	// rect minus `right`: without it placePopover's side branches stay
+	// unreachable for the synthetic rect, as today.
 	function currentAutoPosition(host) {
 		const el = anchor?.getTarget?.() || null;
-		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), top: 80 };
+		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
 		const pos = placePopover(r, POPOVER_W, measurePopover());
 		return { x: pos.left, y: pos.top };
 	}
