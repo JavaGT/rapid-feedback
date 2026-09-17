@@ -1,0 +1,554 @@
+[0m
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+I'll start by reading the prior review report and the commit underreview.
+[0m→ [0mRead artifacts/wave-2026-09-18-0730/hostile-review-46.md 
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show --stat 4fd7f69 && echo "=====DIFF=====" && git show 4fd7f69
+commit 4fd7f69942b6943636d2f0d27b9c7c846c13f3d6
+Author: JavaGT <java@javagrant.com>
+Date:   Fri Sep 18 07:55:32 2026 +1200
+
+    Popover + test: FIX-FIRST remedies for the #46 hostile review
+    
+    - beginPopoverDrag's drag-time clamp and currentAutoPosition's inline
+      fallback-rect pad now source POPOVER_INSETS.pad — the reviewer found
+      two live literal-8 sites the cross-exam missed; the fallback copy
+      deliberately keeps lacking `right` (documented: it keeps placePopover's
+      side branches unreachable for that rect, as today).
+    - run10: the old 'overlap lower-half' case actually exercised the above
+      branch (formulas coincide when unclamped); replaced with a true
+      lower-arm case pinned in its precondition window (h > 390 asserted
+      live), near() tightened to 0.5, and close()'s second Escape now fires
+      only when the comment box is dirty so a pristine first-Escape failure
+      cannot be masked. placePopoverAt indentation restored.
+
+ rapid-feedback.user.js | 27 +++++++++++++++------------
+ test/run10.js          | 33 +++++++++++++++++++++++++++++----
+ 2 files changed, 44 insertions(+), 16 deletions(-)
+=====DIFF=====
+commit 4fd7f69942b6943636d2f0d27b9c7c846c13f3d6
+Author: JavaGT <java@javagrant.com>
+Date:   Fri Sep 18 07:55:32 2026 +1200
+
+    Popover + test: FIX-FIRST remedies for the #46 hostile review
+    
+    - beginPopoverDrag's drag-time clamp and currentAutoPosition's inline
+      fallback-rect pad now source POPOVER_INSETS.pad — the reviewer found
+      two live literal-8 sites the cross-exam missed; the fallback copy
+      deliberately keeps lacking `right` (documented: it keeps placePopover's
+      side branches unreachable for that rect, as today).
+    - run10: the old 'overlap lower-half' case actually exercised the above
+      branch (formulas coincide when unclamped); replaced with a true
+      lower-arm case pinned in its precondition window (h > 390 asserted
+      live), near() tightened to 0.5, and close()'s second Escape now fires
+      only when the comment box is dirty so a pristine first-Escape failure
+      cannot be masked. placePopoverAt indentation restored.
+
+diff --git a/rapid-feedback.user.js b/rapid-feedback.user.js
+index 96ecdbe..c7168f6 100644
+--- a/rapid-feedback.user.js
++++ b/rapid-feedback.user.js
+@@ -1330,14 +1330,14 @@
+ 	// Place the popover for `targetRect`: honor the user's dragged offset when one
+ 	// is set (clamped to the viewport), otherwise the automatic placement.
+ 	function placePopoverAt(host, targetRect, popoverH) {
+-	if (popoverOffset) {
+-		const h = popoverH || measurePopover();
+-		const { pad } = POPOVER_INSETS;
+-		applyPopoverPosition(host,
+-			clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
+-			clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
+-		return;
+-	}
++		if (popoverOffset) {
++			const h = popoverH || measurePopover();
++			const { pad } = POPOVER_INSETS;
++			applyPopoverPosition(host,
++				clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
++				clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
++			return;
++		}
+ 		const pos = placePopover(targetRect, POPOVER_W, popoverH);
+ 		applyPopoverPosition(host, pos.top, pos.left);
+ 	}
+@@ -2229,9 +2229,10 @@
+ 			const dy = point.y - startClient.y;
+ 			if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+ 			moved = true;
++			const { pad } = POPOVER_INSETS;
+ 			popoverOffset = {
+-				x: clamp(base.x + dx, 8, Math.max(8, innerWidth - POPOVER_W - 8)),
+-				y: clamp(base.y + dy, 8, Math.max(8, innerHeight - measurePopover() - 8)),
++				x: clamp(base.x + dx, pad, Math.max(pad, innerWidth - POPOVER_W - pad)),
++				y: clamp(base.y + dy, pad, Math.max(pad, innerHeight - measurePopover() - pad)),
+ 			};
+ 			applyPopoverPosition(host, popoverOffset.y, popoverOffset.x);
+ 		};
+@@ -2259,10 +2260,12 @@
+ 	}
+ 
+ 	// Where the automatic placement would put the popover right now — the drag
+-	// baseline for the first drag before any offset exists.
++	// baseline for the first drag before any offset exists. Mirrors the fallback
++	// rect minus `right`: without it placePopover's side branches stay
++	// unreachable for the synthetic rect, as today.
+ 	function currentAutoPosition(host) {
+ 		const el = anchor?.getTarget?.() || null;
+-		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), top: 80 };
++		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
+ 		const pos = placePopover(r, POPOVER_W, measurePopover());
+ 		return { x: pos.left, y: pos.top };
+ 	}
+diff --git a/test/run10.js b/test/run10.js
+index 77ff2b3..85143db 100644
+--- a/test/run10.js
++++ b/test/run10.js
+@@ -5,11 +5,15 @@
+ const { POP, createReporter, withPage, waitForPopover, waitForPopoverGone } = require('./common');
+ 
+ const GAP = 8, PAD = 8, POPOVER_W = 320;
+-// A pristine draft closes on Escape, but the popover may autofocus its comment
+-// box — then the first Escape only blurs. Retry once.
++// A pristine draft closes on the first Escape; the script's own handler only
++// blurs when the draft holds real work. So retry only when the comment box is
++// dirty — a pristine popover surviving Escape must stay a failure, not be
++// masked by a second press.
+ const close = async (page) => {
+ 	await page.keyboard.press('Escape');
+ 	try { await waitForPopoverGone(page, { timeoutMs: 800, description: 'popover closed' }); return; } catch {}
++	const dirty = await page.evaluate(`(() => { const p = ${POP}; return !!(p && p.querySelector('.rf-popover-ta')?.value); })()`);
++	if (!dirty) throw new Error('pristine popover survived first Escape');
+ 	await page.keyboard.press('Escape');
+ 	await waitForPopoverGone(page, { timeoutMs: 800, description: 'popover closed on second Escape' });
+ };
+@@ -41,7 +45,7 @@ async function readGeo(page, id) {
+ 	return page.evaluate(GEO.replace('PLACEHOLDER', id));
+ }
+ 
+-const near = (a, b) => Math.abs(a - b) <= 1;
++const near = (a, b) => Math.abs(a - b) <= 0.5;
+ 
+ module.exports = async function run10() {
+ 	const { check, finish } = createReporter();
+@@ -79,7 +83,28 @@ module.exports = async function run10() {
+ 		await matrixCase('placement matrix: full-height target at left', 1200, 800, [100, 0, 100, 800], 'right');
+ 		await matrixCase('placement matrix: full-height target at right', 1200, 800, [1100, 0, 100, 800], 'left');
+ 		await matrixCase('placement matrix: target fills viewport', 1200, 800, [0, 0, 1200, 800], 'overlap');
+-		await matrixCase('placement matrix: lower-half target collapses upward with clamp', 1200, 800, [0, 500, 1200, 300], 'overlap');
++		// Overlap's lower-half arm: needs r.top > ih/2 (else upper arm) and
++		// r.top < h + gap + pad (else the above branch fires first — its formula
++		// coincides with the unclamped lower arm). That window always clamps to
++		// the pad, which is the invariant this case pins.
++		{
++			const id = 'pa6';
++			await page.setViewport({ width: 1200, height: 800 });
++			await openOn(page, [0, 406, 1200, 300], id);
++			await new Promise(r => setTimeout(r, 200));
++			await page.setViewport({ width: 1200, height: 799 });
++			await new Promise(r => setTimeout(r, 100));
++			const g = await readGeo(page, id);
++			const inWindow = g.at > g.ih / 2 && g.at < g.h + GAP + PAD;
++			const bestY = g.at - g.h - GAP;
++			const expectedTop = Math.min(Math.max(bestY, PAD), g.ih - g.h - PAD);
++			check('placement matrix: overlap lower-half arm clamps to pad (preconditions ' + JSON.stringify({ at: g.at, h: g.h, inWindow }) + ')',
++				inWindow && near(g.pt, expectedTop) && near(g.pt, PAD) && near(g.pl, PAD),
++				`expected (${expectedTop},${PAD}) got (${g.pt},${g.pl})`);
++			await page.evaluate((id) => document.getElementById(id)?.remove(), id);
++			await close(page);
++			await waitForPopoverGone(page, { description: 'popover closed after lower-arm case' });
++		}
+ 		await matrixCase('placement matrix: narrow viewport pads the left clamp', 800, 600, [700, 50, 80, 40], 'below');
+ 
+ 		// Centered fallback: with the anchor target removed, Alt+Shift+R reset must
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Now let me examine the current committed state precisely.
+[0m→ [0mRead test/run10.js 
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "POPOVER_INSETS\|beginPopoverDrag\|currentAutoPosition\|placePopoverAt\|centeredFallbackRect" rapid-feedback.user.js
+130:	const POPOVER_INSETS = { gap: 8, pad: 8 };
+1332:	function placePopoverAt(host, targetRect, popoverH) {
+1335:			const { pad } = POPOVER_INSETS;
+1352:			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+1353:			placePopoverAt(popoverEl, rect, measurePopover());
+1360:		const { gap, pad } = POPOVER_INSETS;
+1372:	// the top of the viewport. Edge policy lives in POPOVER_INSETS.
+1373:	function centeredFallbackRect() {
+1374:		const { pad } = POPOVER_INSETS;
+1396:					placePopoverAt(anchor.host, r, measurePopover());
+1468:		// beginPopoverDrag distinguishes drags from clicks on it.
+1476:			beginPopoverDrag(e, host);
+1582:			placePopoverAt(host, r, popover.offsetHeight || 480);
+2063:		placePopoverAt(host, getViewportRect(el), popover.offsetHeight || 480);
+2221:	function beginPopoverDrag(e, host) {
+2224:		let base = popoverOffset || currentAutoPosition(host);
+2232:			const { pad } = POPOVER_INSETS;
+2266:	function currentAutoPosition(host) {
+2268:		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git status --short && echo "=====HEAD=====" && git rev-parse HEAD && echo "=====ln=====" && git log --oneline -3
+?? .scratch/abstraction-zoom-2026-09-10.md
+?? .scratch/abstraction-zoom-2026-09-18-0730.md
+?? .scratch/blind-plan-vs-existing.md
+?? .scratch/existing-app-outline.md
+?? .scratch/forced-subtraction-2026-09-10.md
+?? .scratch/hostile-muse.md
+?? .scratch/hostile-omen.md
+?? .scratch/oxalpha-blind-plan.md
+?? .scratch/pain-journal-2026-09-10.md
+?? .scratch/quick-scan-2026-09-10.md
+?? .scratch/quick-scan-2026-09-18-0730.md
+?? artifacts/automation-receipts/2026-09-18/
+?? artifacts/wave-2026-09-18-0730/
+?? test/repro-h1.js
+=====HEAD=====
+4fd7f69942b6943636d2f0d27b9c7c846c13f3d6
+=====ln=====
+4fd7f69 Popover + test: FIX-FIRST remedies for the #46 hostile review
+46eebe2 AGENTS.md: harness paragraph recounts ten suites; browser override vars in precedence order (#55)
+fbadc45 Popover: centralize the viewport-edge 8s into POPOVER_INSETS (#46)
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Let me read the relevant source sections in full to verify logic and indentation.
+[0m→ [0mRead rapid-feedback.user.js [90m[offset=2218, limit=58][0m
+[0m→ [0mRead rapid-feedback.user.js [90m[offset=1326, limit=80][0m
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Both source sites check out. Let me verify whitespace convention and then run the suite to confirm the test honestly pins the new case.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1332,1343p' rapid-feedback.user.js | cat -A | head -20
+cat: illegal option -- A
+usage: cat [-belnstuv] [file ...]
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls test/node_modules >/dev/null 2>&1 && echo "node_modules present" || echo "needs install"; ls test/
+node_modules present
+common.js
+node_modules
+package-lock.json
+package.json
+page.html
+page2.html
+repro-h1.js
+run-all.js
+run.js
+run10.js
+run2.js
+run3.js
+run4.js
+run5.js
+run6.js
+run7.js
+run8.js
+run9.js
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "rf-popover-ta\|popoverDraft\|dirty" rapid-feedback.user.js | head -40
+154:	let popoverDraftGuard = null;
+1151:.rf-popover-ta{width:100%;min-height:60px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7f9fa;color:#18212b}
+1152:.rf-popover-ta:focus{outline:2px solid #258a55;outline-offset:-1px}
+1215:.rf-popover-ta{width:100%;min-height:44px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#fff;color:#18212b}
+1800:		ta.className = 'rf-popover-ta';
+1829:		popoverDraftGuard = () => ta.value !== openComment
+2201:		popoverDraftGuard = null;
+2414:		genTa.className = 'rf-popover-ta';
+3084:				let dirty = false;
+3085:				try { dirty = !!(popoverEl && popoverDraftGuard && popoverDraftGuard()); } catch { dirty = false; }
+3086:				if (!dirty && !popoverEl && panelEl && panelEl.style.display !== 'none') {
+3088:					dirty = !!String(v || '').trim();
+3090:				if (dirty) { try { editable.blur(); } catch {} return; }
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+[0m→ [0mRead rapid-feedback.user.js [90m[offset=3074, limit=24][0m
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1330,1343p' rapid-feedback.user.js | sed -n l
+\t// Place the popover for `targetRect`: honor the user's d\
+ragged offset when one$
+\t// is set (clamped to the viewport), otherwise the automa\
+tic placement.$
+\tfunction placePopoverAt(host, targetRect, popoverH) {$
+\t\tif (popoverOffset) {$
+\t\t\tconst h = popoverH || measurePopover();$
+\t\t\tconst { pad } = POPOVER_INSETS;$
+\t\t\tapplyPopoverPosition(host,$
+\t\t\t\tclamp(popoverOffset.y, pad, Math.max(pad, innerHeig\
+ht - h - pad)),$
+\t\t\t\tclamp(popoverOffset.x, pad, Math.max(pad, innerWidt\
+h - POPOVER_W - pad)));$
+\t\t\treturn;$
+\t\t}$
+\t\tconst pos = placePopover(targetRect, POPOVER_W, popover\
+H);$
+\t\tapplyPopoverPosition(host, pos.top, pos.left);$
+\t}$
+[0m$ [0mcd /Users/server/Development/rapid-feedback && sed -n '1794,1835p' rapid-feedback.user.js
+tabRow.appendChild(stylesTab);
+		popover.appendChild(tabRow);
+
+		// Comment body
+		const commentBody = document.createElement('div');
+		const ta = document.createElement('textarea');
+		ta.className = 'rf-popover-ta';
+		ta.placeholder = 'What should change?';
+		if (initial?.comment) ta.value = initial.comment;
+		commentBody.appendChild(ta);
+
+		// Category bar
+		const catBar = document.createElement('div');
+		catBar.className = 'rf-cat-bar';
+		let selCat = initial?.category || activeCategory;
+		for (const c of CATEGORIES) {
+			const btn = document.createElement('button');
+			btn.className = 'rf-cat-btn' + (c.id === selCat ? ' active' : '');
+			btn.textContent = c.label;
+			btn.addEventListener('click', () => {
+				catBar.querySelectorAll('.rf-cat-btn').forEach(b => b.classList.remove('active'));
+				btn.classList.add('active');
+				selCat = c.id;
+			});
+			catBar.appendChild(btn);
+		}
+		commentBody.appendChild(catBar);
+
+		// Pick destination
+		let destData = initial?.destination || null;
+		// A reflex Escape must not nuke real work, but a pristine draft closes
+		// normally — established single-Esc-dismiss flows (and suites) rely on
+		// it. Dirty = typed comment, style tweaks, destination, or category.
+		const openComment = initial?.comment || '';
+		const openCategory = initial?.category || activeCategory;
+		popoverDraftGuard = () => ta.value !== openComment
+			|| Object.keys(adjustedStyles).length > 0
+			|| !!destData
+			|| selCat !== openCategory;
+
+		const destRow = document.createElement('div');
+		destRow.className = 'rf-dest-row';
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Indentation and Escape logic confirmed. Now let me run the suite to verify run10 is green and the precondition actuallyholds.
+[0m→ [0mRead test/run-all.js 
+[0m$ [0mcd /Users/server/Development/rapid-feedback && cat test/package.json
+{
+  "private": true,
+  "scripts": { "test": "node run-all.js" },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+[0m$ [0mcd /Users/server/Development/rapid-feedback && (cd test && node -e "require('./run10')().then(p=>{console.log('RUN10_RESULT',p);process.exit(p?0:1)}).catch(e=>{console.error('ERR',e);process.exit(2)})")
+PASS  placement matrix: room below target — below (top=bottom+8)
+PASS  placement matrix: target near viewport bottom — above (top=top-h-8)
+PASS  placement matrix: full-height target at left — right (left=right+8)
+PASS  placement matrix: full-height target at right — left (left=left-w-8)
+PASS  placement matrix: target fills viewport — overlap (overlap bestY)
+PASS  placement matrix: overlap lower-half arm clamps to pad (preconditions {"at":406,"h":407,"inWindow":true})
+PASS  placement matrix: narrow viewport pads the left clamp — below (top=bottom+8)
+PASS  centered fallback: rect top 80, centered with pad
+PASS  drag clamp: far up-left pins to pad
+PASS  drag clamp: far down-right pins to viewport edge
+
+10/10 checks passed
+RUN10_RESULT true
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+run10 green, preconditions `{at:406, h:407, inWindow:true}`. Now the full suite to rule out regressions elsewhere.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && npm --prefix test test 2>&1 | tail -30
+PASS  markdown identifies the containing iframe
+PASS  iframe popover is positioned in the top viewport
+
+8/8 checks passed
+PASS  Submit stays available after target removal
+PASS  removed target draft can be submitted
+
+2/2 checks passed
+PASS  fixture reproduces click-through hint hitting editor
+PASS  feedback targets the hint, not the entire editor
+PASS  feedback captures only the instruction and its small rectangle
+PASS  picking leaves editor DOM unchanged
+PASS  feedback click never activates editor
+PASS  ordinary clicks still pass through the hint
+
+6/6 checks passed
+PASS  placement matrix: room below target — below (top=bottom+8)
+PASS  placement matrix: target near viewport bottom — above (top=top-h-8)
+PASS  placement matrix: full-height target at left — right (left=right+8)
+PASS  placement matrix: full-height target at right — left (left=left-w-8)
+PASS  placement matrix: target fills viewport — overlap (overlap bestY)
+PASS  placement matrix: overlap lower-half arm clamps to pad (preconditions {"at":406,"h":407,"inWindow":true})
+PASS  placement matrix: narrow viewport pads the left clamp — below (top=bottom+8)
+PASS  centered fallback: rect top 80, centered with pad
+PASS  drag clamp: far up-left pins to pad
+PASS  drag clamp: far down-right pins to viewport edge
+
+10/10 checks passed
+
+10/10 suites passed
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Full suite green (10/10). Let me scan for any remaining literal edge-policy sites and confirm no other drift.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "clamp([^)]*, 8\|Math\.max(8\|innerWidth - POPOVER_W - 8\|innerHeight - measurePopover() - 8" rapid-feedback.user.js
+(no output)
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show 4fd7f69 -- rapid-feedback.user.js | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)'
+-	if (popoverOffset) {
+-		const h = popoverH || measurePopover();
+-		const { pad } = POPOVER_INSETS;
+-		applyPopoverPosition(host,
+-			clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
+-			clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
+-		return;
+-	}
++		if (popoverOffset) {
++			const h = popoverH || measurePopover();
++			const { pad } = POPOVER_INSETS;
++			applyPopoverPosition(host,
++				clamp(popoverOffset.y, pad, Math.max(pad, innerHeight - h - pad)),
++				clamp(popoverOffset.x, pad, Math.max(pad, innerWidth - POPOVER_W - pad)));
++			return;
++		}
++			const { pad } = POPOVER_INSETS;
+-				x: clamp(base.x + dx, 8, Math.max(8, innerWidth - POPOVER_W - 8)),
+-				y: clamp(base.y + dy, 8, Math.max(8, innerHeight - measurePopover() - 8)),
++				x: clamp(base.x + dx, pad, Math.max(pad, innerWidth - POPOVER_W - pad)),
++				y: clamp(base.y + dy, pad, Math.max(pad, innerHeight - measurePopover() - pad)),
+-	// baseline for the first drag before any offset exists.
++	// baseline for the first drag before any offset exists. Mirrors the fallback
++	// rect minus `right`: without it placePopover's side branches stay
++	// unreachable for the synthetic rect, as today.
+-		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(8, (innerWidth - POPOVER_W) / 2), top: 80 };
++		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Let me check the #46 issue scope and the artifacts directory before writing the report.
+[0m$ [0mcd /Users/server/Development/rapid-feedback && ls -la artifacts/wave-2026-09-18-0730/
+total 408
+drwxr-xr-x@ 11 server  staff    352 Sep 18 07:55 .
+drwxr-xr-x@ 12 server  staff    384 Sep 18 07:36 ..
+-rw-r--r--@  1 server  staff  96156 Sep 18 07:50 hostile-review-46-stdout-or.log
+-rw-r--r--@  1 server  staff     91 Sep 18 07:43 hostile-review-46-stdout.log
+-rw-r--r--   1 server  staff  13819 Sep 18 07:50 hostile-review-46.md
+-rw-r--r--@  1 server  staff  21025 Sep 18 07:57 hostile-review-4fd7f69-stdout.log
+-rw-r--r--@  1 server  staff   7834 Sep 18 07:44 suite-full-46.log
+-rw-r--r--@  1 server  staff   7848 Sep 18 07:56 suite-full-remedies.log
+-rw-r--r--@  1 server  staff    739 Sep 18 07:42 suite-run10-46.log
+-rw-r--r--@  1 server  staff    739 Sep 18 07:41 suite-run10-first.log
+-rw-r--r--@  1 server  staff    753 Sep 18 07:55 suite-run10-fix.log
+[0m$ [0mcd /Users/server/Development/rapid-feedback && grep -n "POP\s*=\|POP =" test/common.js | head; grep -n "module.exports" test/common.js
+10:const POP = `(() => { for (const h of [...document.body.children, ...document.documentElement.children]) { const p = h.shadowRoot?.querySelector('.rf-popover'); if (p) return p; } return null; })()`;
+74:module.exports = { POP, MARKERS, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGone };
+[0m$ [0mcd /Users/server/Development/rapid-feedback && gh -R JavaGT/rapid-feedback issue view 46 2>&1 | head -60
+title:	[wave 2026-09-17] Evaluate: centralize popover viewport inset/gap policy
+state:	OPEN
+author:	JavaGT (JavaGT)
+labels:	
+comments:	4
+assignees:	
+projects:	
+milestone:	
+issue-type:	
+parent:	
+sub-issues:	
+sub-issues-completed:	
+blocked-by:	
+blocking:	
+number:	46
+--
+# Abstraction-zoom review — 2026-09-17
+
+Scope is limited to the 2026-09-16 changes: the pre-envelope load branch, `centeredFallbackRect`, and the `waitFor` helper slice. Existing major sites are not re-reported.
+
+## Outlines
+
+- **Pre-envelope load (`rapid-feedback.user.js:1056-1069`):** read the storage key; return if absent; parse JSON; choose bare-array versus envelope rows; retain object rows; hydrate each row with `makeAnnotation`; swallow load errors.
+- **Centered fallback (`rapid-feedback.user.js:1337-1366`):** clear persisted drag offset; read the live anchor if connected; otherwise construct a centered synthetic rect; place the popover; wake anchoring; show confirmation. The new helper computes the synthetic rect from viewport width and the 8px edge pad.
+- **Wait helpers (`test/common.js:54-71`, used by `test/run.js`):** describe the polling contract; delay; repeatedly evaluate a page expression until truthy or deadline; throw a diagnostic timeout; specialize for open/closed popover; export the helpers.
+
+## Findings
+
+1. **`load()` spans persistence, wire-format discrimination, row validation, and domain hydration.** Evidence: `rapid-feedback.user.js:1056-1068` performs `localStorage` access, `JSON.parse`, array/envelope selection, filtering, and `makeAnnotation` mapping in one procedure, with the format distinction embedded in a ternary. This is a real level boundary, not a correctness defect. Proposed behavior-preserving bricks: `readStoredAnnotations()` (storage + parse), `annotationRowsFromPayload(parsed)` (format selection), and `hydrateAnnotations(rows)` (filter + `makeAnnotation`). Keep the outer `load()` as orchestration; preserve the existing catch-and-ignore behavior. (Related envelope-version question remains #41; this finding is the broader seam, not a duplicate of that ticket.)
+
+2. **Popover geometry policy is still mirrored as literals around the new fallback brick.** Evidence: `rapid-feedback.user.js:1327-1328` clamps with literal `8`, `1350-1357` separately defines `gap = 8, pad = 8`, and `1363-1365` defines another local `pad = 8` plus the fallback rect. The helper is one-level, but edge/gap policy is conventionally duplicated. Proposed behavior-preserving bricks: `popoverViewportInsets()` (pad/gap), `centeredFallbackRect(insets)` (synthetic target), and `clampPopoverPosition(...)` (shared bounds). Preserve current 80px top and all placement branch ordering.
+
+The `waitFor` slice is coherent as a bounded-polling primitive. Its page-expression string boundary and exported-but-unused generic helper are already represented by #35 and #43; no new finding is filed here.
+
+## Deferred (already ticketed)
+
+- `showPopover` body — #16.
+- panel — #20.
+- `componentFramesFor` — #19.
+- chord listeners — #21.
+- category-bar construction — #26.
+- element-capture trio — #27.
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Let me confirm `applyPopoverPosition` rounding (relevant to the 0.5 tolerance) and sanity-check the old-vs-new expressions are value-identical.
+[0m→ [0mRead rapid-feedback.user.js [90m[offset=1315, limit=12][0m
+[0m$ [0mcd /Users/server/Development/rapid-feedback && git show fbadc45:rapid-feedback.user.js | sed -n '2226,2234p'; echo "====NEW===="; sed -n '2230,2237p' rapid-feedback.user.js
+const move = (ev) => {
+			const point = topClientPoint(ev);
+			const dx = point.x - startClient.x;
+			const dy = point.y - startClient.y;
+			if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+			moved = true;
+			popoverOffset = {
+				x: clamp(base.x + dx, 8, Math.max(8, innerWidth - POPOVER_W - 8)),
+				y: clamp(base.y + dy, 8, Math.max(8, innerHeight - measurePopover() - 8)),
+====NEW====
+			if (!moved && Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
+			moved = true;
+			const { pad } = POPOVER_INSETS;
+			popoverOffset = {
+				x: clamp(base.x + dx, pad, Math.max(pad, innerWidth - POPOVER_W - pad)),
+				y: clamp(base.y + dy, pad, Math.max(pad, innerHeight - measurePopover() - pad)),
+			};
+			applyPopoverPosition(host, popoverOffset.y, popoverOffset.x);
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+All items verified. Writing the report now.
+[0m$ [0mcat > /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-18-0730/hostile-review-4fd7f69.md <<'EOF'
+# Hostile re-review — #46 remediation `4fd7f69`
+
+- Repo: `/Users/server/Development/rapid-feedback` @ `4fd7f69` (worktree dirty only with foreign untracked `.scratch/` + `test/repro-h1.js`)
+- Scope: `4fd7f69` ("Popover + test: FIX-FIRST remedies for the #46 hostile review"), the remediation for the FIX-FIRST verdict on `2aed5bf..fbadc45` (`hostile-review-46.md`)
+- Method: read committed state (`git show 4fd7f69:...`), line-level diff inspection, whitespace inspection (`sed -n l`), and execution of `test/run10.js` plus the full suite (`npm --prefix test test`, 10/10 suites)
+- Reviewer mandate: try to break the change; read-only except this file
+
+## Verdict
+
+**APPROVED.** All five required items are met with file:line evidence, the two shipped-code edits are value-identical substitutions of the centralized `POPOVER_INSETS.pad`, and the test suite is green (run10 10/10, full suite 10/10). The drag clamp (`rapid-feedback.user.js:2232-2235`) and the inline fallback pad (`:2268`) now source `POPOVER_INSETS.pad`; the only remaining literal-`8` policy sites are gone (grep for `clamp(..., 8` / `Math.max(8` returns empty). The old mislabeled overlap case is replaced by a true lower-arm case whose precondition is asserted live (`test/run10.js:98`, observed `{at:406,h:407,inWindow:true}`), so it can no longer pass by the above-branch formula coincidence described in Finding A. `near()` is 0.5, `close()` throws on a pristine surviving Escape instead of masking it, and `placePopoverAt`'s body is back to the file's two-tab function indentation. The diff introduces no new production literals and no behavior drift; the residual observations below are low-severity and non-blocking.
+
+## Item-by-item
+
+### 1. Drag clamp + inline fallback now source `POPOVER_INSETS.pad`; behavior byte-identical — PASS
+
+- `POPOVER_INSETS = { gap: 8, pad: 8 }` — `rapid-feedback.user.js:130`, untouched by this commit.
+- `beginPopoverDrag` — `rapid-feedback.user.js:2232` adds `const { pad } = POPOVER_INSETS;`, and `:2234-2235` replace the two literal-`8` clamps with `pad`. Diff (`git show 4fd7f69 -- rapid-feedback.user.js`) shows only `8` → `pad` at those four positions; no other token changed.
+- `currentAutoPosition` — `rapid-feedback.user.js:2268` `Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2)` replaces `Math.max(8, ...)`. Identical value while `pad === 8`.
+- Behavior identity is exact, not approximate: `applyPopoverPosition` rounds once at `rapid-feedback.user.js:1321`, so with `pad === 8` every clamp bound is the same integer as before.
+- The fallback rect still omits `right` (`:2268` builds `{ bottom: 80, left, top: 80 }`); this is deliberate and documented at `:2262-2265` ("Mirrors the fallback rect minus `right` ... side branches stay unreachable ... as today"). It preserves pre-commit reachability — see residual note R1.
+
+### 2. run10 has a true overlap lower-half-arm case with a live precondition; mislabeled case gone — PASS
+
+- The old `matrixCase(... [0, 500, 1200, 300], 'overlap')` line is removed and replaced by the block at `test/run10.js:86-107`.
+- Precondition is computed live and required by the assertion: `test/run10.js:98` `inWindow = g.at > g.ih / 2 && g.at < g.h + GAP + PAD`, gated into `check(... inWindow && near(g.pt, expectedTop) && near(g.pt, PAD) && near(g.pl, PAD))` at `:101-103`.
+- The window is exactly the complement of production's `above` guard (`rapid-feedback.user.js:1363`, `r.top - popoverH - gap >= pad`): `at < h + gap + pad` means `above` cannot fire, and `at > ih/2` selects the overlap lower ternary arm (`:1366`). With the 1200-wide anchor, `below`/`right`/`left` cannot fire, so `inWindow === true` ⟹ the lower arm is the branch taken.
+- Live run confirms the precondition and the pin: `PASS ... (preconditions {"at":406,"h":407,"inWindow":true})`. With `h = 407`, the above-branch formula would coincide with the unclamped lower arm, but the gate requires `h > 390`; had `h <= 390` the predicate is false and the check fails (no vacuous pass). Expected top is the lower-arm formula (`:99`), which differs from the upper-arm result (`g.ab + GAP` clamped to `ih - h - pad = 384`), so the ternary is now genuinely exercised — Finding A resolved.
+
+### 3. `near()` is 0.5 — PASS
+
+- `test/run10.js:48` `const near = (a, b) => Math.abs(a - b) <= 0.5;` (was `<= 1`).
+- Production positions are integers (`rapid-feedback.user.js:1321`), and every expected value in the suite is integral, so 0.5 is the tightest whole-pixel-exact tolerance. It now catches a 1px pad/gap drift: e.g. `POPOVER_INSETS.pad = 9` makes the drag clamp actual `9`/`871` against the oracle's `8`/`872`, both off by 1 > 0.5. Finding F resolved.
+
+### 4. `close()` retries second Escape only when `.rf-popover-ta` non-empty, else throws — PASS
+
+- `test/run10.js:12-19`: first Escape (`:13`), settle-or-fall-through (`:14`), live dirty probe `:15` `!p.querySelector('.rf-popover-ta')?.value`, hard failure `:16` `if (!dirty) throw new Error('pristine popover survived first Escape')`, and only then the second Escape (`:17`).
+- This matches production: a pristine draft has no dirty guard (`rapid-feedback.user.js:1829`, `popoverDraftGuard`), so `:3085` yields `dirty = false`, `:3090` does not blur, and `:3093` `cancelPopover()` closes on the first Escape; only a dirty draft blurs first. The previous rationale comment was wrong and is corrected at `:8-11`. The retry can now only fire when there is real work to justify it, so it cannot mask a pristine first-Escape regression.
+
+### 5. `placePopoverAt` indentation matches the file convention — PASS
+
+- `rapid-feedback.user.js:1333-1340` body is two tabs (`sed -n '1330,1343p' | sed -n l` shows `\t\tif`, `\t\t\tconst`, `\t\t}`), matching `placePopover` (`:1359-1367`) and the one-tab function / two-tab body convention. The de-indent Finding E is resolved; the change is whitespace-only (no behavior).
+
+## New literals / behavior drift
+
+- `git show 4fd7f69` touches only `rapid-feedback.user.js` and `test/run10.js`. The only production edits are the `pad` substitutions plus one `const { pad } = POPOVER_INSETS;`; no new numeric literal is added to shipped code, and the two literal-`8` policy sites are removed. `grep -n "clamp([^)]*, 8\|Math.max(8\|innerWidth - POPOVER_W - 8" rapid-feedback.user.js` returns nothing.
+- Test additions are test data only (`406`, `300`, `799`, timeouts), consistent with the existing cases; the independent oracle still uses test-local `GAP`/`PAD` (`test/run10.js:7`), which with the tightened `near()` is what detects 1px production drift.
+- Execution: `test/run10.js` 10/10 checks; `npm --prefix test test` → 10/10 suites passed. No regression observed.
+
+## Residual observations (low, non-blocking)
+
+- **R1 — duplicated fallback rect still carries a literal `80`.** `currentAutoPosition` (`rapid-feedback.user.js:2268`) reproduces `centeredFallbackRect` (`:1375`) inline, keeping `top: 80`/`bottom: 80` literal and omitting `right`. #46 scopes "viewport inset/gap policy" and explicitly says to preserve the current 80px top, and the divergence is now documented (`:2262-2265`); behavior is unchanged. Only if `centeredFallbackRect`'s `top`/`bottom` were later edited would the two copies drift. Not introduced by this commit.
+- **R2 — the new overlap case is intentionally pinned to a narrow window.** `h` must exceed 390 and is currently 407 (≈17px margin). If popover content shrinks by ≥18px, the case fails on its own precondition rather than passing vacuously — an honest tripwire, but it will need re-picking on a real content-height change.
+- **R3 — the dirty probe inspects only the textarea value** (`test/run10.js:15`), a subset of production dirty (which also counts style tweaks/destination/category, `rapid-feedback.user.js:1829-1832`). The error direction is safe: it can only over-throw, never mask a pristine first-Escape failure.
+
+None of these are shipped-behavior regressions, and none are within the scope the re-review was asked to enforce.
+
+VERDICT: APPROVED
+EOF
+echo "written:"; wc -l /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-18-0730/hostile-review-4fd7f69.md
+written:
+      57 /Users/server/Development/rapid-feedback/artifacts/wave-2026-09-18-0730/hostile-review-4fd7f69.md
+> openrouter-deepseek-v4.1-flash · deepseek/deepseek-v4.1-flash
+Re-review complete. All five required items verified with file:line evidence, the two production edits are value-identical `8 → POPOVER_INSETS.pad` substitutions, `near()`=0.5, the overlap case now asserts its live precondition (`{at:406,h:407,inWindow:true}`), `close()` throws on a pristine surviving Escape, and `placePopoverAt` is back to two-tab indentation. Full suite is green (10/10 suites; run10 10/10), and no new production literals or behavior drift were introduced. Report written to `artifacts/wave-2026-09-18-0730/hostile-review-4fd7f69.md`; residual low-severity notes (duplicated literal `80` in the fallback rect, narrow 17px test headroom, textarea-only dirty probe) are documented but non-blocking.
+
+VERDICT: APPROVED
+rc=0

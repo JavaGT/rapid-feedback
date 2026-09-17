@@ -1,0 +1,13 @@
+PASS  placement matrix: room below target — below (top=bottom+8)
+PASS  placement matrix: target near viewport bottom — above (top=top-h-8)
+PASS  placement matrix: full-height target at left — right (left=right+8)
+PASS  placement matrix: full-height target at right — left (left=left-w-8)
+PASS  placement matrix: target fills viewport — overlap (overlap bestY)
+PASS  placement matrix: lower-half target collapses upward with clamp — overlap (overlap bestY)
+PASS  placement matrix: narrow viewport pads the left clamp — below (top=bottom+8)
+PASS  centered fallback: rect top 80, centered with pad
+PASS  drag clamp: far up-left pins to pad
+PASS  drag clamp: far down-right pins to viewport edge
+
+10/10 checks passed
+SUITE GREEN
