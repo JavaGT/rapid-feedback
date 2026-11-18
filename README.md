@@ -4,8 +4,8 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 
 ## v5 highlights
 
-- **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (aria-label, name, href), shortened to the smallest chain that still resolves uniquely
-- **Chord-hold target preview** — pulsing blue glow outline shows what you're about to click. Picking includes click-through guidance (such as transcript gutter hints), without changing ordinary page clicks
+- **Selector overhaul** — utility-class filtering (Tailwind etc.), high-signal attributes (aria-label, name, href), one bracket pair per attribute, `CSS.escape` for ids/classes, an `:nth-of-type` tie-break for identical siblings, and a shortened chain that is re-verified for uniqueness after truncation
+- **Chord-hold target preview** — pulsing blue glow outline shows what you're about to click. Picking includes click-through guidance (such as transcript gutter hints), without changing ordinary page clicks. A first-run hint names the gesture; touch users can long-press instead
 - **Element zoom** — ▲/▼ for parent/child and ◀/▶ for siblings; the popover header re-renders so you always see what you're about to capture
 - **Multi-select** — hold chord, click multiple elements (each marked with a numbered green badge showing its order), release → one popover for the whole set. The selection is an editable list: drop a member, promote one to primary, `⧉ Select similar` to grab the repeated siblings, or `+ Add element` to pick another. Chord-clicking again with the popover open grows the selection rather than starting over, so the draft survives. Markers stay on the page throughout, and a style tweak previews across every selected element
 - **Chrome that gets out of the way** — while the chord is held or a pick mode is running, everything the tool renders becomes click-through, so the FAB, panel or popover can never swallow a click meant for the element beneath. Nothing the tool renders can itself be annotated
@@ -15,9 +15,9 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Live style preview** — edits apply to the page as you type and revert on Cancel/Escape, or stay put when you submit
 - **Anchored positioning** — popover moves below → above → right → left to avoid covering its target, and follows it through scrolling and layout shifts
 - **Shadow DOM isolation** — FAB, panel, popover, and toast rendered in shadow roots; immune to host page CSS
-- **Export clarity** — element text first, comment follows, `Tweak:` block for style changes, and every selected element listed with its own resolvable selector
-- **Hardened selectors** — attribute values are escaped so quotes/backslashes can't break them; the `data-testid` / `data-test` / `data-cy` family outranks generic attributes; machine-generated ids (hashes, React uids) are skipped; and Tailwind noise (variant prefixes, arbitrary values, fractions, negatives, Svelte hashes) never reaches a selector
-- **Closed shadow roots** — host-page scripts can't reach into the feedback UI, and chrome lives on `<html>` so hydration wipes can't remove it; a corrupt saved row is skipped instead of wiping the session
+- **Export clarity** — element text first, comment follows, `Tweak:` block for style changes, every selected element listed with its own resolvable selector, a `Page:` line whenever items span URLs, and per-item `id`/`ts`/`url`/`route` in JSON. Credential-like query parameters (`token`, `auth`, `code`, `key`, `session`, …) are stripped from stored and exported URLs; page-derived text is whitespace-collapsed so it cannot forge export headings. Shadow-root targets are labelled with their host.
+- **Hardened selectors** — attribute values are escaped so quotes/backslashes can't break them; ids/classes are `CSS.escape`d; ties get a positional qualifier and the final chain is re-checked; the `data-testid` / `data-test` / `data-cy` family outranks generic attributes; machine-generated ids (hashes, React uids) are skipped; and Tailwind noise (variant prefixes, arbitrary values, fractions, negatives, Svelte hashes) never reaches a selector
+- **Closed shadow roots** — the panel/popover internals are isolated from host-page CSS and DOM; chrome is owned by the instance (page copies of the marker are ignored), self-heals if a host is removed, and follows a target into a top-layer dialog. The page-facing test API is installed only in harness mode. Storage still uses the page origin's `localStorage`, so it is **not** a privacy boundary; a corrupt payload is copied to a `.corrupt` recovery key instead of being silently overwritten, and a bad row is skipped rather than wiping the session
 - **Refreshed theme** — green accent, rounded cards, pill category chips, softer shadows
 - **Svelte-aware feedback** — leaf-to-root nested component trails in the popover and exports, route-disambiguated refs (`projects/+page.svelte:15`), per-member and destination Source lines, `setProjectRoot()` for clickable `vscode://file/…:line:col` links, "Select similar" grouped by component file, and an explicit note when a production build hides source mapping
 - **Richer context** — curated computed visual styles, accessible descriptions and control states, heading levels, and structured context in JSON for developers diagnosing layout and interaction issues
@@ -27,6 +27,8 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | Gesture | Result |
 | --- | --- |
 | Chord + click | Annotate that element |
+| Long-press (touch) | Annotate the element under your finger; dragging cancels so scrolling still works |
+| `Alt+Shift+E` | Annotate the currently focused element (keyboard-only path) |
 | Chord + several clicks, then release | One annotation over all of them |
 | Chord + click, popover already open | Add that element to the current selection |
 | `⧉ Select similar` | Add the primary's repeated siblings (capped at 50, one-click undo) |
@@ -34,10 +36,13 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | ✎ in the panel | Reopen the selection on the page it came from; edit the comment in place anywhere else |
 | Chord, double-tap | Open/close the panel |
 | `Pick destination`, then click | Record where the element should move to |
-| `Esc` | Leave the comment box first when the draft holds work (nothing lost); otherwise cancel destination mode, then close the popover, then close the panel |
+| `Esc` | Leave the comment box first when the draft holds work — membership and zoom changes count as work too — then close; query-only URL churn keeps the draft, and a dirty draft prompts before tab close. Escape is consumed so it cannot also dismiss the host page's dialog |
+| Panel `Cut All` | Click twice to confirm; the selection is wiped only after the export is confirmed on the clipboard. `Cut` behaves the same way for a draft |
 | `Alt+Shift+R` | Bring a dragged-offscreen popover back to its target without losing the draft |
 | ✎ with popover open | Same as `Alt+Shift+R` — return the popover to its target |
 | `⌘/Ctrl + Enter` | Submit from the comment box |
+
+Annotations carry stable ids and timestamps. Two tabs on one origin merge their records on write and on `storage` events (deleted rows stay deleted), so one tab can no longer silently erase another's work. A failed clipboard write never destroys the source, and a failed `localStorage` write never announces "Saved".
 
 The userscript intentionally does not pierce cross-origin iframe contents from the
 parent page. Because the script has no `@noframes` directive, Tampermonkey can run a

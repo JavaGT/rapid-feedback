@@ -96,6 +96,7 @@ module.exports = async function run() {
 			}]));
 		});
 		await page.reload();
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
 		await page.evaluate(require('fs').readFileSync(__dirname + '/../rapid-feedback.user.js', 'utf8'));
 		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
 		await new Promise(r => setTimeout(r, 200));

@@ -15,6 +15,7 @@ module.exports = async function run() {
 		// A second fixture: sibling <svg> icons expose className as an
 		// SVGAnimatedString, which is not a string and cannot be split.
 		await page.goto('file://' + path.join(__dirname, 'page2.html'));
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
 		await page.evaluate(SCRIPT);
 		const chordClick = async (sel) => {
 			const b = await page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
@@ -36,6 +37,10 @@ module.exports = async function run() {
 		check('select similar survives an SVG primary', errors.length === 0 && rows === 2,
 			'pageerrors=' + JSON.stringify(errors) + ' rows=' + rows);
 
+		// A dirty draft survives the first Escape (it only blurs the comment box);
+		// the second one closes it, so the next gesture starts from a clean slate.
+		await page.keyboard.press('Escape');
+		await new Promise(r => setTimeout(r, 80));
 		await page.keyboard.press('Escape');
 		await new Promise(r => setTimeout(r, 150));
 		await page.evaluate(() => localStorage.clear());

@@ -149,9 +149,9 @@ module.exports = async function run6() {
 		count = await page.evaluate(`(() => { let n = 0; for (const h of [...document.body.children, ...document.documentElement.children]) n += h.shadowRoot?.querySelectorAll('.rf-card').length || 0; return n; })()`);
 		check('second Clear click wipes', count === 0, String(count));
 
-		// --- Selector-ambiguity disclosure in exports ---
+		// --- Selector identity first: a twin no longer yields an ambiguous chain,
+		// because capture adds a positional qualifier when the plain chain ties.
 		await page.evaluate(() => {
-			// A twin inside the same parent makes the stored selector ambiguous.
 			const c = document.createElement('div');
 			c.id = 'c1';
 			c.className = 'card';
@@ -162,6 +162,16 @@ module.exports = async function run6() {
 		await page.evaluate(`(() => { const p = ${POP}; p.querySelector('.rf-popover-ta').value = 'ambiguous'; })()`);
 		await page.evaluate(`(() => { ${POP}.querySelector('.rf-btn-primary').click(); })()`);
 		await new Promise(r => setTimeout(r, 150));
+		const storedSelector = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.at(-1).selector);
+		check('twin capture gets a positional qualifier', /nth-of-type/.test(storedSelector), storedSelector);
+		// The warning still fires for a genuinely ambiguous selector (e.g. an old
+		// saved row whose DOM drifted so the chain matches several elements).
+		await page.evaluate(() => {
+			window.__SCOPE_FEEDBACK_API__.annotations.push({
+				selector: 'div.card', tag: 'div', text: 'First card',
+				comment: 'ambiguous', category: 'general', url: location.href
+			});
+		});
 		const md = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.markdown());
 		check('ambiguity warning in markdown', md.includes('matches multiple elements'), md.split('\n').slice(0, 12).join('\n'));
 

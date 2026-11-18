@@ -33,6 +33,9 @@ async function withPage(run) {
 		await page.setViewport({ width: 1200, height: 800 });
 		page.on('pageerror', e => console.log('PAGEERROR: ' + e.message));
 		page.on('console', m => { if (m.type() === 'error') console.log('CONSOLE ERR: ' + m.text()); });
+		// The tool now guards dirty drafts with beforeunload; headless navigations
+		// must accept that prompt or a reload hangs forever.
+		page.on('dialog', d => { d.accept().catch(() => {}); });
 		// The userscript closes its shadow roots so host pages can't reach into the
 		// feedback UI. Tests introspect that UI, so force roots open in the harness.
 		// Runs in every document (including navigations) before page scripts.
@@ -43,6 +46,9 @@ async function withPage(run) {
 			};
 		});
 		await page.goto('file://' + path.join(__dirname, 'page.html'));
+		// The userscript only installs its page-facing test API in harness mode;
+		// production pages get no such global (see C01 in the hostile review).
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
 		await page.evaluate(SCRIPT);
 		const chordClick = async (sel) => {
 			const box = await page.$eval(sel, el => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });

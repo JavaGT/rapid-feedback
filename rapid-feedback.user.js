@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.20
+// @version      5.21
+// @note         v5.21: hostile-review hardening — durable multi-tab storage, confirmed-copy cuts, honest save failures, resolvable selectors, redacted provenance, dirty-draft guards, hostile-page resilience and agent-readable exports
 // @note         v5.20: outline and selection markers follow top-layer dialogs/popups, so the blue ring is no longer painted behind the element being annotated
 // @note         v5.19: chord picking includes click-through text and guidance, so transcript gutter hints no longer select the entire editor
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
@@ -41,13 +42,28 @@
 			Object.defineProperty(window, '__SCOPE_FEEDBACK_FRAME_INSTANCE__', { value: true, configurable: false });
 		} catch { try { window.__SCOPE_FEEDBACK_FRAME_INSTANCE__ = true; } catch {} }
 	}
+	// Per-boot token. A re-injection reads the token left by the previous
+	// instance; a page that only sets the LOADED flag and a decoy host cannot
+	// prove ownership of a host stamped with this token.
+	let bootToken = null;
+	try {
+		const existing = window.__RF_BOOT_TOKEN__;
+		if (typeof existing === 'string' && existing) bootToken = existing;
+		else {
+			bootToken = annotationId();
+			Object.defineProperty(window, '__RF_BOOT_TOKEN__', { value: bootToken, configurable: false, writable: false });
+		}
+	} catch { bootToken = null; }
+
 	// Guard with a dedicated flag so a re-injection during init can't mistake the
 	// half-built API object for a finished one. Flags can lie — HMR and hydration
-	// wipes can strip our chrome while leaving the flag set — so the flag alone
-	// isn't trusted: if no chrome host survives, rebuild rather than bail.
+	// wipes can strip our chrome while leaving the flag set — so the flag plus a
+	// token-stamped, connected host is required before bailing out.
 	if (window.__SCOPE_FEEDBACK_LOADED__) {
-		const fabHost = document.querySelector('[data-rf-chrome]');
-		if (fabHost?.isConnected) return;
+		const ours = [...document.querySelectorAll('[data-rf-chrome]')].some((host) =>
+			host.isConnected && host.parentElement === document.documentElement && !!bootToken && host.__rfBootToken === bootToken
+		);
+		if (ours) return;
 	}
 	window.__SCOPE_FEEDBACK_LOADED__ = true;
 
@@ -134,6 +150,11 @@
 	const COMPONENT_MAX = 8;
 	const RF_CHROME_ATTR = 'data-rf-chrome';
 	const RF_PASSTHROUGH_ATTR = 'data-rf-passthrough';
+	// Hosts this instance actually created. A page-injected copy of the marker
+	// attribute must not make page regions unannotatable or flip click-through.
+	const ownedHosts = new WeakSet();
+	const chromeHosts = new Set();
+	let hostPendingTransient = false;
 	// One declared ladder instead of magic numbers repeated at six call sites:
 	// overlays (toast/banner) float above everything, the outline above markers,
 	// markers above the interactive surfaces.
@@ -150,6 +171,8 @@
 	let panelCountEl = null;
 	let fabEl = null;
 	let popoverEl = null;
+	// Focus to return to when the popover closes; restored only if still live.
+	let restoreFocusEl = null;
 	// Reports whether the open popover's draft holds user work worth protecting
 	// from a reflex Escape. Assigned in showPopover, cleared in hidePopover.
 	let popoverDraftGuard = null;
@@ -325,21 +348,34 @@
 	}
 
 	function collectAttrs(el) {
-		// Values go inside quoted strings in the selector, so quotes and backslashes
-		// must be escaped or the selector silently fails to parse — and every
-		// uniqueness check downstream then fails too.
-		const escapeAttrValue = (v) => String(v).replace(/[\\"]/g, '\\$&');
+		// Each attribute needs its own bracket pair. `[a="x" b="y"]` is invalid
+		// CSS, so any element with two high-signal attributes produced a selector
+		// that never resolved (and every uniqueness check silently failed).
+		const escapeAttrValue = (v) => String(v).replace(/[\\"]/g, '\\$&').replace(/\n/g, ' ');
 		const out = [];
+		const add = (attr, value) => { if (value) out.push(`[${attr}="${escapeAttrValue(value)}"]`); };
 		for (const attr of HIGH_SIGNAL_ATTRS) {
 			let v = el.getAttribute(attr);
 			if (attr === 'href') v = v?.split('?')[0];
-			if (v) out.push(`${attr}="${escapeAttrValue(v)}"`);
+			add(attr, v);
 		}
-		const src = el.getAttribute('src')?.split('?')[0];
-		if (src) out.push(`src="${escapeAttrValue(src)}"`);
-		const placeholder = el.getAttribute('placeholder');
-		if (placeholder) out.push(`placeholder="${escapeAttrValue(placeholder)}"`);
+		add('src', el.getAttribute('src')?.split('?')[0]);
+		add('placeholder', el.getAttribute('placeholder'));
 		return out;
+	}
+
+	// CSS.escape keeps ids/classes like `user.name` or `2fa-card` from becoming
+	// a different selector; the fallback is only for engines without it.
+	function cssIdent(value) {
+		const s = String(value);
+		try { if (globalThis.CSS?.escape) return CSS.escape(s); } catch {}
+		return s.replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
+	}
+
+	function positionalSuffix(el) {
+		if (!el?.parentElement) return '';
+		const siblings = [...el.parentElement.children].filter(c => c.tagName === el.tagName);
+		return siblings.length > 1 ? ':nth-of-type(' + (siblings.indexOf(el) + 1) + ')' : '';
 	}
 
 	// Does `selector` resolve to exactly `el` and nothing else? Attribute values can
@@ -374,24 +410,38 @@
 		let cur = el;
 		while (cur && cur.nodeType === 1 && cur !== ownerDoc.body && cur !== ownerDoc.documentElement) {
 			const parts = [cur.tagName.toLowerCase()];
-			if (isMeaningfulId(cur.id)) parts.push('#' + cur.id);
+			if (isMeaningfulId(cur.id)) parts.push('#' + cssIdent(cur.id));
 			if (typeof cur.className === 'string') {
 				const cls = filterClasses(cur.className);
-				if (cls.length) parts.push('.' + cls.join('.'));
+				if (cls.length) parts.push('.' + cls.map(cssIdent).join('.'));
 			}
-			const attrs = collectAttrs(cur);
-			if (attrs.length) parts.push('[' + attrs.join(' ') + ']');
+			parts.push(...collectAttrs(cur));
 			chain.unshift(parts.join(''));
 			// Walk up only as far as needed: stop as soon as the tail we've built
 			// already identifies the element unambiguously.
 			if (resolvesUniquely(chain.join(' > '), el)) break;
+			// Identical rows (tables, lists) need a positional qualifier before
+			// the chain grows up into a noisy ancestor path.
+			const suffix = positionalSuffix(cur);
+			if (suffix) {
+				const positional = chain.slice();
+				positional[positional.length - 1] += suffix;
+				if (resolvesUniquely(positional.join(' > '), el)) {
+					chain[chain.length - 1] = positional[positional.length - 1];
+					break;
+				}
+			}
 			const next = parentOf(cur);
 			// A selector rooted inside a shadow tree cannot include its host. Source
 			// metadata can cross that boundary, but the selector must remain resolvable.
 			if (!next || next.getRootNode?.() !== selectorRoot) break;
 			cur = next;
 		}
-		return chain.slice(-12).join(' > ');
+		const shortChain = chain.slice(-12).join(' > ');
+		// Uniqueness was verified against the full chain. Truncating afterwards
+		// can silently turn it back into an ambiguous selector, so re-check.
+		if (chain.length > 12 && !resolvesUniquely(shortChain, el)) return chain.join(' > ');
+		return shortChain;
 	}
 
 	function framePathFor(el) {
@@ -458,16 +508,26 @@
 		const r = el.getBoundingClientRect();
 		let left = r.left;
 		let top = r.top;
+		let width = r.width;
+		let height = r.height;
 		let doc = el.ownerDocument;
 		while (doc && doc !== document) {
 			const frame = doc.defaultView?.frameElement;
 			if (!frame) break;
 			const fr = frame.getBoundingClientRect();
-			left += fr.left + frame.clientLeft;
-			top += fr.top + frame.clientTop;
+			// A scaled iframe renders its client viewport smaller than its layout
+			// viewport; multiply inner coordinates by that ratio as we walk up.
+			const sx = frame.clientWidth ? fr.width / frame.clientWidth : 1;
+			const sy = frame.clientHeight ? fr.height / frame.clientHeight : 1;
+			const fx = Number.isFinite(sx) && Math.abs(sx - 1) > 0.001 ? sx : 1;
+			const fy = Number.isFinite(sy) && Math.abs(sy - 1) > 0.001 ? sy : 1;
+			left = fr.left + (left + frame.clientLeft) * fx;
+			top = fr.top + (top + frame.clientTop) * fy;
+			width *= fx;
+			height *= fy;
 			doc = frame.ownerDocument;
 		}
-		return { x: left, y: top, top, left, right: left + r.width, bottom: top + r.height, width: r.width, height: r.height };
+		return { x: left, y: top, top, left, right: left + width, bottom: top + height, width, height };
 	}
 
 	function topClientPoint(e) {
@@ -651,7 +711,9 @@
 		if (!projectRoot || !file) return null;
 		const rel = String(file).replace(/^\.\//, '');
 		const abs = rel.startsWith('/') ? rel : projectRoot + '/' + rel;
-		return 'vscode://file' + encodeURI(abs) + ':' + (line || 1) + (column ? ':' + column : '');
+		// encodeURI leaves # and ? raw, truncating links whose path contains them.
+		const safePath = encodeURI(abs.replace(/#/g, '%23').replace(/\?/g, '%3F'));
+		return 'vscode://file' + safePath + ':' + (line || 1) + (column ? ':' + column : '');
 	}
 
 	function getA11y(el) {
@@ -820,7 +882,19 @@
 	function resolveStoredMember(ref) {
 		if (!ref?.selector) return null;
 		const ownerDoc = frameDocumentFor(ref.framePath);
-		try { return ownerDoc?.querySelector(ref.selector) || null; } catch { return null; }
+		if (!ownerDoc) return null;
+		try {
+			const found = ownerDoc.querySelectorAll(ref.selector);
+			// First-match resolution can silently retarget an annotation to an
+			// unrelated sibling after an SPA re-render.
+			if (found.length !== 1) return null;
+			const el = found[0];
+			if (ref.tag && el.tagName.toLowerCase() !== String(ref.tag).toLowerCase()) return null;
+			const normalize = (s) => String(s || '').trim().replace(/\s+/g, ' ').slice(0, 24);
+			const storedText = normalize(ref.text), liveText = normalize(el.textContent);
+			if (storedText && liveText && !liveText.includes(storedText) && !storedText.includes(liveText)) return null;
+			return el;
+		} catch { return null; }
 	}
 
 	// Stored target/destination record → short label (exports). Same shape of output,
@@ -860,15 +934,65 @@
 		return stripScopeHashes(leaf) || leaf || a.tag || 'general';
 	}
 
+	// Canonical page identity used for both stored provenance and same-page
+	// safety checks. Query strings are dropped: they routinely carry SSO/reset
+	// tokens and SPA filter churn, and never identify a screen on their own.
+	function pageKey(value) {
+		try {
+			const u = new URL(value, location.href);
+			u.search = '';
+			return u.origin + u.pathname + u.hash;
+		} catch { return String(value || ''); }
+	}
+
+	// Keep useful repro context (?tab=, ?view=) but strip credential-like query
+	// params, which otherwise get pasted into tickets from SSO/reset callbacks.
+	const TOKEN_PARAM_RE = /(token|auth|key|secret|code|session|sig|password|passwd|access)/i;
+	function safeUrl(value) {
+		try {
+			const u = new URL(value, location.href);
+			if (u.search) {
+				const params = new URLSearchParams(u.search);
+				for (const name of [...params.keys()]) if (TOKEN_PARAM_RE.test(name)) params.delete(name);
+				u.search = params.toString();
+			}
+			return u.href;
+		} catch { return String(value || ''); }
+	}
+
+	// One-line, single-line sanitizer for every page-derived string that is
+	// interpolated into the human-readable export.
+	function mdInline(value) {
+		return String(value == null ? '' : value).replace(/\s+/g, ' ').replace(/"/g, '\\"').trim();
+	}
+	// Continuation lines become blockquoted so a newline in page-controlled text
+	// cannot forge a new heading or `Where:` line in the pasted ticket.
+	function mdBlock(value) {
+		return String(value == null ? '' : value).split(/\r?\n/).map((line, i) => i ? '> ' + line : line).join('\n');
+	}
+
+	// Stable ids let two tabs reconcile their copies instead of overwriting a
+	// whole-array snapshot. `crypto.randomUUID` is absent on insecure origins,
+	// so keep a bounded fallback.
+	function annotationId() {
+		try { if (globalThis.crypto?.randomUUID) return crypto.randomUUID(); } catch {}
+		return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+	}
+
 	function makeAnnotation(data) {
 		return {
+			id: data.id || annotationId(),
+			ts: data.ts || Date.now(),
 			selector: data.selector || '(general)',
 			framePath: Array.isArray(data.framePath) ? data.framePath : null,
 			tag: data.tag || 'general',
 			text: data.text || '',
 			styles: data.styles || null,
 			rect: data.rect || null,
-			url: data.url || location.href,
+			url: data.url || safeUrl(location.href),
+			pageTitle: data.pageTitle || null,
+			inShadowRoot: !!data.inShadowRoot,
+			shadowHost: data.shadowHost || null,
 			comment: data.comment || '',
 			category: data.category || 'general',
 			adjustedStyles: data.adjustedStyles || null,
@@ -887,21 +1011,24 @@
 		const lines = [];
 		const pageUrl = items[0].url || location.href;
 		const vp = getViewport();
-		lines.push('# Feedback \u2014 ' + document.title);
-		lines.push('Page: ' + pageUrl);
+		lines.push('# Feedback \u2014 ' + mdInline(document.title));
+		lines.push('Page: ' + mdInline(pageUrl));
 		lines.push('Env: ' + vp.w + '\u00d7' + vp.h + ' \u00b7 ' + getBrowserInfo());
 		lines.push('');
 		for (let i = 0; i < items.length; i++) {
 			const a = items[i];
 			const cat = (a.category || 'general').toUpperCase();
 			const label = targetLabel(a);
-			lines.push('## ' + (i + 1) + '. [' + cat + '] ' + label);
-			if (a.text) lines.push('> ' + a.text);
-			if (a.comment) lines.push(a.comment);
+			// One header per page: a batch collected across routes must not attribute
+			// every later item to the first page's URL.
+			if (i > 0 && a.url && a.url !== items[i - 1].url) lines.push('Page: ' + mdInline(a.url));
+			lines.push('## ' + (i + 1) + '. [' + cat + '] ' + mdInline(label));
+			if (a.text) lines.push(mdBlock('> ' + a.text));
+			if (a.comment) lines.push(mdBlock(a.comment));
 			if (a.source?.ref) {
-				lines.push('Source: ' + a.source.ref + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
+				lines.push('Source: ' + mdInline(a.source.ref) + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
 				const trail = componentTrail(a.source);
-				if (trail) lines.push('Component: ' + trail);
+				if (trail) lines.push('Component: ' + mdInline(trail));
 				const eu = editorUrlFor(a.source.file, a.source.line, a.source.column);
 				if (eu) lines.push('Open: ' + eu);
 			} else if (a.source?.status === 'svelte-production-build') {
@@ -909,19 +1036,19 @@
 			}
 			if (a.a11y) {
 				const bits = [];
-				if (a.a11y.role) bits.push('role=' + a.a11y.role);
-				if (a.a11y.name) bits.push('name="' + a.a11y.name + '"');
-				if (a.a11y.testId) bits.push('testid=' + a.a11y.testId);
-				if (a.a11y.level) bits.push('level=' + a.a11y.level);
-				if (a.a11y.description) bits.push('description="' + a.a11y.description + '"');
+				if (a.a11y.role) bits.push('role=' + mdInline(a.a11y.role));
+				if (a.a11y.name) bits.push('name="' + mdInline(a.a11y.name) + '"');
+				if (a.a11y.testId) bits.push('testid=' + mdInline(a.a11y.testId));
+				if (a.a11y.level) bits.push('level=' + mdInline(a.a11y.level));
+				if (a.a11y.description) bits.push('description="' + mdInline(a.a11y.description) + '"');
 				if (a.a11y.states) bits.push('state=' + Object.entries(a.a11y.states).map(([key, value]) => key + ':' + value).join(','));
 				if (bits.length) lines.push('A11y: ' + bits.join(' '));
 			}
 			const looks = annotationLooks(a);
-			if (looks) lines.push('Looks: ' + formatLooks(looks));
+			if (looks) lines.push('Looks: ' + mdInline(formatLooks(looks)));
 			if (isSelectorAmbiguous(a.selector, resolveStoredMember(a))) lines.push('⚠ Selector matches multiple elements right now — it may drift');
 			const where = compactAncestorChain(a.selector);
-			if (where) lines.push('Where: ' + where);
+			if (where) lines.push('Where: ' + (a.inShadowRoot ? '(inside shadow root of <' + (a.shadowHost || 'host') + '>) ' : '') + where);
 			const frame = compactFramePath(a.framePath);
 			if (frame) lines.push('Frame: ' + frame);
 			if (a.rect) lines.push('Rect: ' + a.rect.width + '\u00d7' + a.rect.height);
@@ -989,6 +1116,11 @@
 				os: sp > 0 ? bi.slice(sp + 4) : ''
 			},
 			items: items.map(a => ({
+				id: a.id || null,
+				ts: a.ts || null,
+				url: a.url || null,
+				pageTitle: a.pageTitle || null,
+				route: routeFromUrl(a.url || pageUrl),
 				category: a.category || 'general',
 				comment: a.comment,
 				text: a.text || null,
@@ -1034,22 +1166,33 @@
 	}
 
 	function fallbackCopy(text) {
-		const ta = document.createElement('textarea');
-		ta.value = text;
-		ta.style.cssText = 'position:fixed;left:-9999px;top:0';
-		ta.setAttribute('readonly', '');
-		document.body.appendChild(ta);
-		ta.select();
-		try { document.execCommand('copy'); showToast('Copied'); } catch { showToast('Failed'); }
-		document.body.removeChild(ta);
+		try {
+			const ta = document.createElement('textarea');
+			ta.value = text;
+			ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+			ta.setAttribute('readonly', '');
+			(document.body || document.documentElement).appendChild(ta);
+			ta.select();
+			let ok = false;
+			try { ok = document.execCommand('copy') === true; } catch {}
+			ta.remove();
+			showToast(ok ? 'Copied' : 'Copy failed — nothing was cut');
+			return ok;
+		} catch {
+			showToast('Copy failed — nothing was cut');
+			return false;
+		}
 	}
 
+	// Resolves to whether the text actually reached the clipboard. Destructive
+	// actions must wait for this instead of assuming success.
 	function copyText(text) {
 		if (navigator.clipboard?.writeText) {
-			navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => fallbackCopy(text));
-			return;
+			return navigator.clipboard.writeText(text)
+				.then(() => { showToast('Copied'); return true; })
+				.catch(() => fallbackCopy(text));
 		}
-		fallbackCopy(text);
+		return Promise.resolve(fallbackCopy(text));
 	}
 
 	// Installs from before v5.14 saved a bare array under this key — keep
@@ -1066,32 +1209,82 @@
 		if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
 	}
 
-	function readStoredAnnotations() {
-		const data = localStorage.getItem(STORAGE_KEY);
-		return data ? JSON.parse(data) : null;
+	const DELETED_MAX = 200;
+	let deletedIds = new Set();
+	let corruptBackedUp = false;
+
+	function storedPayload() {
+		try {
+			const raw = localStorage.getItem(STORAGE_KEY);
+			if (!raw) return null;
+			const parsed = JSON.parse(raw);
+			const rows = annotationRowsFromPayload(parsed);
+			if (!Array.isArray(rows)) return null;
+			return { rows, deleted: Array.isArray(parsed?.deleted) ? parsed.deleted : [] };
+		} catch { return null; }
 	}
 
 	function load() {
-		try {
-			const parsed = readStoredAnnotations();
-			if (!parsed) return;
-			hydrateAnnotations(annotationRowsFromPayload(parsed));
-		} catch {}
+		const rawStored = localStorage.getItem(STORAGE_KEY);
+		const stored = storedPayload();
+		if (!stored) {
+			// A truncated/quota-corrupted blob used to be read as an empty session
+			// and then silently overwritten. Keep a recovery copy first — but an
+			// empty store is not corruption.
+			if (rawStored && !corruptBackedUp) {
+				corruptBackedUp = true;
+				try { localStorage.setItem(STORAGE_KEY + '.corrupt', rawStored); } catch {}
+				showToast('Saved data unreadable — recovery copy kept');
+			}
+			return;
+		}
+		deletedIds = new Set(stored.deleted);
+		hydrateAnnotations(stored.rows);
 	}
 
-	// Quota failures surface as a toast — silently losing a save would be worse.
+	// Union this tab's copy with whatever is stored. Newest `ts` wins per id and
+	// tombstones stay deleted, so a merge cannot resurrect another tab's delete.
+	function reconcileStored() {
+		const stored = storedPayload();
+		if (!stored) return;
+		const byId = new Map();
+		for (const a of annotations) byId.set(a.id, a);
+		for (const row of stored.rows) {
+			const a = makeAnnotation(row);
+			const current = byId.get(a.id);
+			if (!current || (a.ts || 0) > (current.ts || 0)) byId.set(a.id, a);
+		}
+		const dead = new Set([...deletedIds, ...stored.deleted]);
+		annotations = [...byId.values()].filter(a => !dead.has(a.id));
+		deletedIds = dead;
+	}
+
+	function markDeleted(rows) {
+		for (const a of rows) if (a?.id) deletedIds.add(a.id);
+	}
+
+	// Returns whether the write actually reached storage; callers must not
+	// announce "Saved" or close a draft on failure.
 	function save() {
 		try {
-			localStorage.setItem(STORAGE_KEY, JSON.stringify({ annotations }));
+			reconcileStored();
+			localStorage.setItem(STORAGE_KEY, JSON.stringify({
+				annotations,
+				deleted: [...deletedIds].slice(-DELETED_MAX),
+				rev: Date.now()
+			}));
+			return true;
 		} catch {
 			showToast('Could not save — storage full');
+			return false;
 		}
 	}
 
 	function persist(fn) {
 		fn();
-		save();
+		const ok = save();
 		if (panelRoot) renderPanel();
+		return ok;
 	}
 
 	// The dragged popover position persists per origin so a reviewer who parks it
@@ -1119,12 +1312,20 @@
 		// Every piece of our own chrome carries this marker, so isRfChrome can reject
 		// it by inspection rather than by keeping a list of hosts in sync.
 		host.setAttribute(RF_CHROME_ATTR, '');
+		if (hostPendingTransient) {
+			host.setAttribute('data-rf-transient', '1');
+			hostPendingTransient = false;
+		}
+		try { Object.defineProperty(host, '__rfBootToken', { value: bootToken, configurable: false }); } catch {}
+		ownedHosts.add(host);
+		chromeHosts.add(host);
 		// Closed roots keep page scripts from reaching into the feedback UI — panel
 		// comments are none of the host page's business. Everything that needs the
 		// root later holds its own reference.
 		const root = host.attachShadow({ mode: 'closed' });
 		// Hosted on <html>, not <body>: SPA frameworks routinely wipe body children
 		// during hydration, and our chrome should survive that.
+		hardenHost(host);
 		document.documentElement.appendChild(host);
 		return { host, root };
 	}
@@ -1143,6 +1344,67 @@
 		return null;
 	}
 
+	// A top layer beats any z-index, so interactive chrome must move into the
+	// owning dialog while a draft is open there, then return to <html>.
+	let chromeAnchorEl = null;
+	function hostChromeAt(host, el) {
+		const parent = topLayerHostFor(el) || document.documentElement;
+		if (host.parentElement !== parent) parent.appendChild(host);
+	}
+	function reseatChrome() {
+		for (const host of chromeHosts) if (host.isConnected) hostChromeAt(host, chromeAnchorEl);
+	}
+
+	// Hosts live in the page's DOM, so a hostile stylesheet can hide them. Pin
+	// the structural properties with inline !important (which outranks author
+	// !important) while leaving transform/opacity to placement and the FAB.
+	function hardenHost(host, interactive = false) {
+		try {
+			host.style.setProperty('position', 'fixed', 'important');
+			host.style.setProperty('z-index', host.style.zIndex || String(Z.surface), 'important');
+			host.style.setProperty('visibility', 'visible', 'important');
+			host.style.setProperty('display', 'block', 'important');
+			host.style.setProperty('pointer-events', interactive ? 'auto' : 'none', 'important');
+		} catch {}
+	}
+
+	// A page (or a hydration wipe) can remove our hosts. Reattach only hosts we
+	// created, coalesced into one task so MutationObserver churn stays bounded.
+	let chromeHealScheduled = false;
+	function scheduleChromeHeal() {
+		if (chromeHealScheduled) return;
+		chromeHealScheduled = true;
+		setTimeout(() => {
+			chromeHealScheduled = false;
+			for (const host of chromeHosts) {
+				if (!host.isConnected && !host.hasAttribute('data-rf-transient')) document.documentElement.appendChild(host);
+			}
+		}, 50);
+	}
+	new MutationObserver((records) => {
+		for (const rec of records) {
+			for (const node of rec.removedNodes) {
+				if (node.nodeType !== 1 || node.hasAttribute?.('data-rf-transient')) continue;
+				if (!node.hasAttribute?.(RF_CHROME_ATTR)) continue;
+				scheduleChromeHeal();
+			}
+		}
+	}).observe(document.documentElement, { childList: true });
+
+	// Inline <style> nodes are refused by a strict style-src. Move the finished
+	// style text into an adopted sheet, which is CSP-exempt, and drop the nodes.
+	function adoptStyles(root) {
+		try {
+			const nodes = [...root.querySelectorAll('style')];
+			if (!nodes.length || !root.adoptedStyleSheets) return;
+			const css = nodes.map(s => s.textContent).join('\n');
+			const sheet = new CSSStyleSheet();
+			sheet.replaceSync(css);
+			root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
+			for (const s of nodes) s.remove();
+		} catch { /* keep the fallback <style> nodes */ }
+	}
+
 	function shadowStyle() {
 		const s = document.createElement('style');
 		s.textContent = `
@@ -1157,7 +1419,7 @@
 	function popoverStyles() {
 		return `
 *{margin:0;padding:0;box-sizing:border-box}
-.rf-popover{width:${POPOVER_W}px;background:#fff;border:1px solid #d7dfe5;border-radius:12px;padding:16px;box-shadow:0 14px 45px rgba(23,32,45,0.18);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#18212b;pointer-events:auto}
+.rf-popover{width:min(${POPOVER_W}px, calc(100vw - 2 * ${POPOVER_INSETS.pad}px));background:#fff;border:1px solid #d7dfe5;border-radius:12px;padding:16px;box-shadow:0 14px 45px rgba(23,32,45,0.18);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#18212b;pointer-events:auto}
 .rf-drag-handle{display:flex;justify-content:center;align-items:center;height:8px;margin:-6px 0 8px;cursor:grab;border-radius:6px}
 .rf-drag-handle::before{content:'';width:36px;height:4px;border-radius:2px;background:#d7dfe5}
 .rf-drag-handle:hover::before{background:#b9c6cf}
@@ -1210,7 +1472,7 @@
 	function panelStyles() {
 		return `
 *{margin:0;padding:0;box-sizing:border-box}
-.rf-panel{width:${PANEL_W}px;max-width:100vw;height:100dvh;background:#f7f9fa;color:#18212b;display:flex;flex-direction:column;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border-left:1px solid #d7dfe5;box-shadow:-14px 0 45px rgba(23,32,45,0.10);pointer-events:auto}
+.rf-panel{width:min(${PANEL_W}px, 100vw);max-width:100vw;height:100dvh;background:#f7f9fa;color:#18212b;display:flex;flex-direction:column;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border-left:1px solid #d7dfe5;box-shadow:-14px 0 45px rgba(23,32,45,0.10);pointer-events:auto}
 .rf-panel-header{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #e3e9ee;flex-shrink:0}
 .rf-panel-header h2{margin:0;font-size:18px;font-weight:700;flex:1}
 .rf-panel-toolbar{display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid #e3e9ee;flex-shrink:0;flex-wrap:wrap}
@@ -1234,21 +1496,28 @@
 	// --- Toast (shadow DOM) ---
 	function showToast(msg) {
 		const { host, root } = createShadowRoot();
+		host.setAttribute('data-rf-transient', '1');
 		host.style.cssText = `all:initial;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:${Z.overlay};pointer-events:none`;
+		hardenHost(host);
 		const el = document.createElement('div');
 		el.style.cssText = 'padding:8px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 18px rgba(23,32,45,0.25);background:#18212b;color:#fff';
 		el.textContent = msg;
+		el.setAttribute('role', 'status');
+		el.setAttribute('aria-live', 'polite');
 		root.appendChild(el);
 		setTimeout(() => host.remove(), 2000);
 	}
 
 	// --- FAB (shadow DOM) ---
 	function createFab() {
-		if (fabEl) return;
+		// A hydration wipe or a page script can remove the host; rebuild instead
+		// of returning forever after with a stale reference.
+		if (fabEl?.isConnected) return;
 		const { host, root } = createShadowRoot();
 		// The host must not take hits itself: `all:initial` resets pointer-events to
 		// auto, which would leave an invisible box parked in the corner.
 		host.style.cssText = `all:initial;position:fixed;bottom:20px;right:20px;z-index:${Z.fab};pointer-events:none`;
+		hardenHost(host);
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
 		// Hidden is the default state, and hidden means untouchable — opacity alone
@@ -1258,6 +1527,7 @@
 .rf-fab.rf-fab-on{pointer-events:auto;opacity:1;transform:translateX(0)}
 `;
 		root.appendChild(s);
+		adoptStyles(root);
 		const btn = document.createElement('button');
 		btn.className = 'rf-fab';
 		btn.setAttribute('aria-label', 'Feedback');
@@ -1318,8 +1588,10 @@
 	// beats an inherited none, hence the !important rule in shadowStyle().
 	function syncChromeClickThrough() {
 		const on = chordWasActive || !!pickMode;
-		for (const host of document.querySelectorAll('[' + RF_CHROME_ATTR + ']')) {
+		for (const host of chromeHosts) {
+			if (!host.isConnected) continue;
 			host.toggleAttribute(RF_PASSTHROUGH_ATTR, on);
+			if (host === panelEl) host.style.setProperty('pointer-events', on ? 'none' : 'auto', 'important');
 		}
 	}
 
@@ -1397,7 +1669,7 @@
 	// A static popover therefore costs ~zero frames instead of a per-frame rect read.
 	function startAnchor(host, getTarget) {
 		stopAnchor();
-		anchor = { host, getTarget, raf: 0, last: '', idleFrames: 0, scrollDocuments: new Set() };
+		anchor = { host, getTarget, raf: 0, last: '', markerLast: '', idleFrames: 0, scrollDocuments: new Set() };
 		const tick = () => {
 			if (!anchor) return;
 			let changed = false;
@@ -1414,7 +1686,10 @@
 			}
 			// Members can move independently of the primary, so they get their own
 			// pass rather than riding on the primary's rect-change guard.
-			if (selMarkers.length) { positionSelectionMarkers(); changed = true; }
+			if (selMarkers.length) {
+				const markerKey = positionSelectionMarkers();
+				if (markerKey !== anchor.markerLast) { anchor.markerLast = markerKey; changed = true; }
+			}
 			// Wake on any scroll or resize — cheap to check, and it covers the common
 			// "the page moved under us" cases without an observer mesh.
 			if (scrollX !== anchor.lastScrollX || scrollY !== anchor.lastScrollY || innerWidth !== anchor.lastW || innerHeight !== anchor.lastH) {
@@ -1441,6 +1716,15 @@
 			anchor.scrollDocuments.add(doc);
 		}
 		resizeWaiters.add(anchor.wake);
+		// Attribute-only layout shifts (class/style/hidden) and scroll inside a
+		// page shadow root do not reach the window listener above.
+		anchor.wheelWake = () => anchor.wake();
+		addEventListener('wheel', anchor.wheelWake, { capture: true, passive: true });
+		addEventListener('pointerdown', anchor.wheelWake, { capture: true, passive: true });
+		anchor.attrObserver = new MutationObserver((records) => {
+			if (records.some(r => !isRfChrome(r.target))) anchor.wake();
+		});
+		anchor.attrObserver.observe(document, { subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'open'] });
 		anchor.lastScrollX = scrollX; anchor.lastScrollY = scrollY;
 		anchor.lastW = innerWidth; anchor.lastH = innerHeight;
 		anchor.raf = requestAnimationFrame(tick);
@@ -1450,15 +1734,24 @@
 		if (!anchor) return;
 		cancelAnimationFrame(anchor.raf);
 		removeEventListener('scroll', anchor.wake, { capture: true });
+		removeEventListener('wheel', anchor.wheelWake, { capture: true });
+		removeEventListener('pointerdown', anchor.wheelWake, { capture: true });
+		anchor.attrObserver?.disconnect();
 		for (const doc of anchor.scrollDocuments) doc.removeEventListener('scroll', anchor.wake, { capture: true });
 		resizeWaiters.delete(anchor.wake);
 		anchor = null;
 	}
 
-	function clamp(v, min, max) { return Math.min(max, Math.max(v, min)); }
+	// When the viewport is narrower than the panel, `max < min`: return the
+	// smaller bound instead of placing the surface off-screen.
+	function clamp(v, min, max) { return max < min ? min : Math.min(max, Math.max(v, min)); }
 
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
 	function showPopover(el, data, initial) {
+		hostPendingTransient = true;
+		const prior = document.activeElement;
+		restoreFocusEl = prior && prior.nodeType === 1 && prior !== document.body && !isRfChrome(prior) ? prior : null;
+		chromeAnchorEl = el;
 		hidePopover();
 		// Pin the record being edited by identity so a panel delete that shifts
 		// array indices mid-edit cannot redirect Submit onto another annotation.
@@ -1471,13 +1764,20 @@
 		// origin, every translate3d placement is displaced downward by the whole
 		// page height and the popover renders off-screen on all but short pages.
 		host.style.cssText = `all:initial;position:fixed;top:0;left:0;z-index:${Z.surface};pointer-events:none`;
+		hardenHost(host);
+		hostChromeAt(host, el);
+		reseatChrome();
 		root.appendChild(shadowStyle());
 		const ps = document.createElement('style');
 		ps.textContent = popoverStyles();
 		root.appendChild(ps);
+		adoptStyles(root);
 
 		const popover = document.createElement('div');
 		popover.className = 'rf-popover';
+		popover.style.pointerEvents = 'auto';
+		popover.setAttribute('role', 'dialog');
+		popover.setAttribute('aria-label', 'Add feedback for ' + (data?.tag || 'element'));
 
 		// Drag handle. The whole strip is the grip; the drag threshold inside
 		// beginPopoverDrag distinguishes drags from clicks on it.
@@ -1505,6 +1805,10 @@
 		// editable: rows can be dropped, promoted or added while the popover is open.
 		let members = (initial?.members?.length ? initial.members : [el]).filter(m => m?.isConnected);
 		let missingMembers = [...(initial?.missingMembers || [])];
+		// Selection/zoom work is real draft work. Track it explicitly so a reflex
+		// Escape cannot discard it just because no comment text was typed.
+		let draftMutated = false;
+		const touchDraft = () => { draftMutated = true; };
 		let similarAdded = [];
 		if (!members.includes(el)) members.unshift(el);
 		// Assigned once the styles grid exists; zooming re-seeds it.
@@ -1542,7 +1846,7 @@
 				sourceEl.style.display = 'none';
 				sourceEl.title = '';
 			}
-			selEl.textContent = compactAncestorChain(curData.selector) || curData.selector;
+			selEl.textContent = (curData.piercedLayer ? 'Passed through ' + curData.piercedLayer + ' \u00b7 ' : '') + (compactAncestorChain(curData.selector) || curData.selector);
 			if (curData.text) {
 				quoteEl.style.display = 'block';
 				quoteEl.textContent = '\u201c' + curData.text + '\u201d';
@@ -1672,6 +1976,7 @@
 						star.textContent = '★';
 						star.title = 'Make primary';
 						star.addEventListener('click', () => {
+							touchDraft();
 							members.splice(i, 1);
 							members.unshift(m);
 							setPrimary(m);
@@ -1683,6 +1988,7 @@
 					del.textContent = '×';
 					del.title = 'Remove from selection';
 					del.addEventListener('click', () => {
+						touchDraft();
 						members.splice(i, 1);
 						if (i === 0) setPrimary(members[0]);
 						else syncSelection();
@@ -1743,7 +2049,7 @@
 				allMatches = [...(zoomTarget.parentElement?.children || [])].filter(candidate => {
 					if (candidate === zoomTarget) return false;
 					const f = directSvelteFile(candidate);
-					return f && f === directFile;
+					return f && f === directFile && !members.includes(candidate);
 				});
 			} else {
 				const signature = filterClasses(classNameOf(zoomTarget)).sort().join(' ');
@@ -1754,6 +2060,7 @@
 			const matches = allMatches.slice(0, SIMILAR_MAX);
 			if (!matches.length) { showToast('No similar siblings found'); return; }
 			similarAdded = matches;
+			touchDraft();
 			members.push(...matches);
 			similarBtn.textContent = 'Undo similar selection';
 			syncSelection();
@@ -1771,6 +2078,7 @@
 		// against, so we put that one back before moving on.
 		function setZoomTarget(next) {
 			if (!next || next === zoomTarget) return;
+			touchDraft();
 			revertStyles();
 			for (const k in adjustedStyles) delete adjustedStyles[k];
 			members[0] = next;
@@ -1844,7 +2152,8 @@
 		popoverDraftGuard = () => ta.value !== openComment
 			|| Object.keys(adjustedStyles).length > 0
 			|| !!destData
-			|| selCat !== openCategory;
+			|| selCat !== openCategory
+			|| draftMutated;
 
 		const destRow = document.createElement('div');
 		destRow.className = 'rf-dest-row';
@@ -2011,6 +2320,8 @@
 			return {
 				...curData,
 				comment,
+				url: curData.url || safeUrl(location.href),
+				pageTitle: document.title,
 				category: selCat,
 				adjustedStyles: Object.keys(adjustedStyles).length ? { ...adjustedStyles } : null,
 				styleRestore: pendingStyleRestore(),
@@ -2020,24 +2331,32 @@
 		}
 
 		function submit() {
-			let comment = ta.value.trim();
-			if (Object.keys(adjustedStyles).length) {
-				comment = comment ? comment + '\n\n' + Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n')
-					: Object.entries(adjustedStyles).map(([k, v]) => k + ': ' + v + ';').join('\n');
-			}
-			if (!comment) { showToast('Please enter a comment or adjust a style'); return; }
+			// Keep the reviewer's prose intact: tweaks are rendered once by the
+			// exporter's Tweak: block, not appended to the stored comment.
+			const comment = ta.value.trim();
+			if (!comment && !Object.keys(adjustedStyles).length) { showToast('Please enter a comment or adjust a style'); return; }
 			const annotationData = buildAnnotationData(comment);
-			persist(() => {
+			const saved = persist(() => {
 				// Replace by identity, not raw index: the panel can delete other
 				// rows while this popover is open, shifting indices. If the
 				// original record is gone, append instead of overwriting a
 				// stranger that slid into its slot.
 				const ref = initial?.editRef;
 				const at = ref ? annotations.indexOf(ref) : -1;
-				if (at >= 0) annotations[at] = makeAnnotation(annotationData);
-				else if (Number.isInteger(initial?.editIndex) && !ref && annotations[initial.editIndex]) annotations[initial.editIndex] = makeAnnotation(annotationData);
-				else annotations.push(makeAnnotation(annotationData));
+				const previous = at >= 0 ? annotations[at]
+					: (Number.isInteger(initial?.editIndex) && !ref ? annotations[initial.editIndex] : null);
+				// Editing replaces the existing record. Keep its id, otherwise the
+				// merge-on-save sees a new row and revives the old one from storage.
+				const replacement = makeAnnotation({
+					...annotationData,
+					id: previous?.id || annotationData.id,
+					ts: Date.now()
+				});
+				if (at >= 0) annotations[at] = replacement;
+				else if (previous) annotations[initial.editIndex] = replacement;
+				else annotations.push(replacement);
 			});
+			if (!saved) { showToast('Not saved — export before closing'); return; }
 			keepStyles();
 			hidePopover();
 			showToast('Saved');
@@ -2052,10 +2371,11 @@
 		const cutBtn = document.createElement('button');
 		cutBtn.className = 'rf-btn';
 		cutBtn.textContent = 'Cut';
-		cutBtn.addEventListener('click', () => {
+		cutBtn.addEventListener('click', async () => {
 			const ann = makeAnnotation(buildAnnotationData(ta.value.trim() || '(no comment)'));
-			copyText(toMarkdown([ann]));
-			hidePopover();
+			const ok = await copyText(toMarkdown([ann]));
+			if (ok) hidePopover();
+			else showToast('Copy failed — draft kept');
 		});
 		const submitBtn = document.createElement('button');
 		submitBtn.className = 'rf-btn rf-btn-primary';
@@ -2084,6 +2404,7 @@
 			addMembers(els) {
 				const fresh = els.filter(m => m?.isConnected && !members.includes(m));
 				if (!fresh.length) { showToast('Already in the selection'); return; }
+				touchDraft();
 				members.push(...fresh);
 				syncSelection();
 				showToast('Added ' + fresh.length + ' element' + (fresh.length === 1 ? '' : 's'));
@@ -2182,7 +2503,8 @@
 	// outlives the popover's live references; elements that no longer resolve are
 	// reported so the card can say how much was actually undone.
 	function revertSavedTweaks(a) {
-		if (!a?.styleRestore) return 0;
+		// A selector from another page can resolve to an unrelated element here.
+		if (!a?.styleRestore || pageKey(a.url) !== pageKey(location.href)) return 0;
 		let reverted = 0;
 		for (const t of a.styleRestore.targets) {
 			const el = resolveStoredMember(t);
@@ -2220,6 +2542,10 @@
 		hideOutline();
 		clearSelectionMarkers();
 		stopAnchor();
+		if (restoreFocusEl?.isConnected) {
+			try { restoreFocusEl.focus({ preventScroll: true }); } catch {}
+		}
+		restoreFocusEl = null;
 	}
 
 	// Cancel/Esc: discard the draft AND the dragged position — an explicit
@@ -2295,18 +2621,24 @@
 	}
 
 	function ensurePanelShell() {
-		if (panelRoot && panelListEl) return;
+		if (panelRoot && panelListEl && panelEl?.isConnected) return;
 		const { host, root } = createShadowRoot();
 		host.style.cssText = `all:initial;position:fixed;top:0;right:0;z-index:${Z.surface}`;
+		// Re-assert after cssText (which clears earlier !important declarations).
+		hardenHost(host, true);
 		panelEl = host;
 		panelRoot = root;
 		root.appendChild(shadowStyle());
 		const ps = document.createElement('style');
 		ps.textContent = panelStyles();
 		root.appendChild(ps);
+		adoptStyles(root);
 
 		const panel = document.createElement('div');
 		panel.className = 'rf-panel';
+		panel.style.pointerEvents = 'auto';
+		panel.setAttribute('role', 'dialog');
+		panel.setAttribute('aria-label', 'Rapid Feedback panel');
 
 		const header = document.createElement('div');
 		header.className = 'rf-panel-header';
@@ -2336,7 +2668,24 @@
 		}
 		toolbar.appendChild(toolbarBtn('Copy', () => { if (annotations.length) copyText(toMarkdown(annotations)); else showToast('Nothing to export'); }));
 		toolbar.appendChild(toolbarBtn('JSON', () => { if (annotations.length) copyText(JSON.stringify(toFeedbackJSON(annotations))); else showToast('Nothing to export'); }));
-		toolbar.appendChild(toolbarBtn('Cut All', () => { if (!annotations.length) { showToast('Nothing to cut'); return; } copyText(toMarkdown(annotations)); persist(() => { annotations = []; }); showToast('Cut'); }));
+		const cutAllBtn = toolbarBtn('Cut All', async () => {
+			if (!annotations.length) { showToast('Nothing to cut'); return; }
+			if (!cutAllBtn.dataset.armed) {
+				cutAllBtn.dataset.armed = '1';
+				cutAllBtn.textContent = 'Really cut all?';
+				showToast('Click Cut All again to confirm');
+				setTimeout(() => { if (cutAllBtn.dataset.armed) { delete cutAllBtn.dataset.armed; cutAllBtn.textContent = 'Cut All'; } }, 2500);
+				return;
+			}
+			delete cutAllBtn.dataset.armed;
+			cutAllBtn.textContent = 'Cut All';
+			// Wipe only after the export is confirmed on the clipboard.
+			const ok = await copyText(toMarkdown(annotations));
+			if (!ok) { showToast('Copy failed — nothing cut'); return; }
+			persist(() => { markDeleted(annotations); annotations = []; });
+			showToast('Cut');
+		});
+		toolbar.appendChild(cutAllBtn);
 		// Two-step in-panel confirm: one misclick shouldn't wipe everything, and
 		// native dialogs can't be trusted on pages that override window.confirm.
 		const clearBtn = toolbarBtn('Clear', () => {
@@ -2344,7 +2693,7 @@
 			if (clearBtn.dataset.armed) {
 				delete clearBtn.dataset.armed;
 				clearBtn.textContent = 'Clear';
-				persist(() => { annotations = []; });
+				persist(() => { markDeleted(annotations); annotations = []; });
 				showToast('Cleared');
 				return;
 			}
@@ -2386,7 +2735,7 @@
 			const a = annotations[idx];
 			if (!a) return;
 			if (delBtn) {
-				persist(() => { annotations.splice(idx, 1); });
+				persist(() => { markDeleted([a]); annotations.splice(idx, 1); });
 				showToast('Deleted');
 				return;
 			}
@@ -2461,7 +2810,14 @@
 	function renderPanelList() {
 		if (!panelListEl) return;
 		const list = panelListEl;
-		list.scrollTop = 0;
+		const keepScroll = list.scrollTop;
+		// Flush an in-flight inline edit before its node is discarded, otherwise
+		// a save triggered by an unrelated action silently loses the keystrokes.
+		for (const cel of [...list.querySelectorAll('.rf-comment[contenteditable="true"]')]) {
+			const idx = parseInt(cel.closest('.rf-card')?.getAttribute('data-idx'), 10);
+			const a = annotations[idx];
+			if (a) a.comment = cel.textContent.trim();
+		}
 		list.innerHTML = '';
 		panelCountEl && (panelCountEl.textContent = String(annotations.length));
 		if (!annotations.length) {
@@ -2529,7 +2885,7 @@
 				{ selector: a.styleRestore.primary, framePath: a.styleRestore.primaryFramePath },
 				...(Array.isArray(a.styleRestore.targets) ? a.styleRestore.targets : []),
 			];
-			if (restoreRefs?.some(resolveStoredMember)) {
+			if (pageKey(a.url) === pageKey(location.href) && restoreRefs?.some(resolveStoredMember)) {
 				const revBtn = document.createElement('button');
 				revBtn.className = 'rf-btn-icon rf-btn-revert';
 				revBtn.textContent = '⎌';
@@ -2552,30 +2908,33 @@
 			card.appendChild(body);
 			list.appendChild(card);
 		}
+		list.scrollTop = keepScroll;
 	}
 
 	function openPanel() {
 		ensurePanelShell();
-		panelEl.style.display = 'block';
+		hostChromeAt(panelEl, chromeAnchorEl);
+		panelEl.style.setProperty('display', 'block', 'important');
 		renderPanelList();
 	}
 
 	function closePanel() {
-		if (panelEl) panelEl.style.display = 'none';
+		if (panelEl) panelEl.style.setProperty('display', 'none', 'important');
 	}
 
 	// --- Chord-hold outline & selection markers ---
 	// Both live in ONE shared overlay shadow root instead of the light DOM: page
-	// CSS can't restyle them, the pulse keyframes live inside the root (so no
-	// stylesheet is ever injected into the host page's <head>), and everything
-	// stays under the standard chrome click-through rules.
+	// CSS can't restyle them and the pulse keyframes live inside the root. The
+	// chord-hover hit test does use one retained, synchronously toggled style
+	// node in the page (see inspectionElementsAt), never a node per frame.
+	// Everything stays under the standard chrome click-through rules.
 	let overlayChrome = null;
 
 	function placeOverlayChrome(el) {
 		const host = overlayChrome?.host;
 		if (!host) return;
-		const parent = topLayerHostFor(el) || document.documentElement;
-		if (host.parentElement !== parent) parent.appendChild(host);
+		if (el) chromeAnchorEl = el;
+		hostChromeAt(host, el);
 	}
 
 	function ensureOverlayChrome(el) {
@@ -2592,6 +2951,7 @@
 .rf-marker-badge{position:absolute;top:-9px;left:-9px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#258a55;border:2px solid #fff;color:#fff;font:700 11px/14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(23,32,45,0.35)}
 `;
 		root.appendChild(s);
+		adoptStyles(root);
 		overlayChrome = { host, root };
 		if (el) placeOverlayChrome(el);
 		return overlayChrome;
@@ -2687,8 +3047,10 @@
 	function showPickBanner(kind) {
 		hidePickBanner();
 		const spec = PICK_MODES[kind];
+		hostPendingTransient = true;
 		const { host, root } = createShadowRoot();
 		host.style.cssText = `all:initial;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:${Z.overlay};pointer-events:none`;
+		hardenHost(host);
 		root.appendChild(shadowStyle());
 		const s = document.createElement('style');
 		s.textContent = `
@@ -2697,6 +3059,7 @@
 .rf-banner span{opacity:0.85}
 `;
 		root.appendChild(s);
+		adoptStyles(root);
 		const b = document.createElement('div');
 		b.className = 'rf-banner';
 		const strong = document.createElement('b');
@@ -2715,10 +3078,22 @@
 
 	function destTargetFrom(e) {
 		const path = e.composedPath ? e.composedPath() : [e.target];
-		const el = path.find(n => n && n.nodeType === 1) || e.target;
+		let el = path.find(n => n && n.nodeType === 1) || e.target;
 		if (!el || el.nodeType !== 1) return null;
-		if (isRfChrome(el)) return null;
 		const ownerDoc = el.ownerDocument || document;
+		// The chord path pierces scrims; pick mode used to record the scrim
+		// itself. Use the same rejection rule so both gestures agree.
+		if (isPierceLayer(el, ownerDoc) && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
+			lastPiercedLayer = el;
+			for (const below of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
+				if (below === el || below.nodeType !== 1 || isRfChrome(below)) continue;
+				if (isPierceLayer(below, ownerDoc)) continue;
+				if (below === ownerDoc.body || below === ownerDoc.documentElement) continue;
+				el = below;
+				break;
+			}
+		}
+		if (isRfChrome(el)) return null;
 		if (el === ownerDoc.body || el === ownerDoc.documentElement) return null;
 		return el;
 	}
@@ -2754,7 +3129,12 @@
 	function isRfChrome(el) {
 		if (!el || el.nodeType !== 1) return false;
 		for (let node = el; node;) {
-			if (node.nodeType === 1 && node.hasAttribute?.(RF_CHROME_ATTR)) return true;
+			// Only hosts we created (or the tool's own direct children of <html>)
+			// count. A page element that copies the attribute stays annotatable.
+			if (node.nodeType === 1 && (
+				ownedHosts.has(node)
+				|| (node.hasAttribute?.(RF_CHROME_ATTR) && node.parentElement === node.ownerDocument?.documentElement)
+			)) return true;
 			const root = node.getRootNode?.();
 			node = root && root.host ? root.host : node.parentElement;
 		}
@@ -2766,6 +3146,7 @@
 	// or paints opaque with no text. Class-name lists can't cover every framework;
 	// geometry + naming/paint is the portable signal.
 	const OVERLAY_NAME_RE = /modal|overlay|backdrop|drawer|scrim|dialog|sheet/i;
+	let lastPiercedLayer = null;
 	function isOverlayShell(el, ownerDoc = el.ownerDocument || document) {
 		if (el === ownerDoc.body || el === ownerDoc.documentElement) return false;
 		const cs = getComputedStyle(el);
@@ -2773,7 +3154,7 @@
 		const r = el.getBoundingClientRect();
 		const view = ownerDoc.defaultView || window;
 		if (r.width < view.innerWidth * 0.9 || r.height < view.innerHeight * 0.9) return false;
-		if (OVERLAY_NAME_RE.test(el.className) || OVERLAY_NAME_RE.test(el.id)) return true;
+		if (OVERLAY_NAME_RE.test(classNameOf(el)) || OVERLAY_NAME_RE.test(el.id)) return true;
 		const bg = cs.backgroundColor;
 		const alpha = bg.startsWith('rgba') ? parseFloat(bg.slice(5, -1).split(',')[3]) : 1;
 		return (alpha >= 0.35 && !(el.textContent || '').trim());
@@ -2783,33 +3164,45 @@
 	// native hit-testing see pointer-transparent guidance/decorations, then remove
 	// the override synchronously (before any page event can use it). The browser
 	// still owns paint order, clipping and transforms; no bounding-box guessing.
+	const inspectionStyles = new WeakMap();
+	let inspectionOverrideWorks = true;
 	function inspectionElementsAt(ownerDoc, x, y) {
-		const style = ownerDoc.createElement('style');
-		style.textContent = `* { pointer-events: auto !important; } [${RF_CHROME_ATTR}] { pointer-events: none !important; }`;
-		try {
+		if (!inspectionOverrideWorks) return ownerDoc.elementsFromPoint(x, y);
+		let style = inspectionStyles.get(ownerDoc);
+		if (!style?.isConnected) {
+			style = ownerDoc.createElement('style');
+			style.textContent = `html.rf-inspection *{pointer-events:auto !important} html.rf-inspection [${RF_CHROME_ATTR}]{pointer-events:none !important}`;
 			(ownerDoc.head || ownerDoc.documentElement).appendChild(style);
-			return ownerDoc.elementsFromPoint(x, y);
-		} finally {
-			style.remove();
+			inspectionStyles.set(ownerDoc, style);
+			// A strict style-src refuses the sheet; detect once and degrade to
+			// native hit-testing rather than churning a node every hover frame.
+			try { inspectionOverrideWorks = !!(style.sheet && style.sheet.cssRules.length); }
+			catch { inspectionOverrideWorks = false; }
 		}
+		const rootEl = ownerDoc.documentElement;
+		rootEl.classList.add('rf-inspection');
+		try { return ownerDoc.elementsFromPoint(x, y); }
+		finally { rootEl.classList.remove('rf-inspection'); }
+	}
+
+	function isPierceLayer(el, ownerDoc) {
+		if (!el || el.nodeType !== 1) return false;
+		// Known overlay class names stay a fast-path signal; the shell heuristic
+		// catches frameworks that name their scrims differently.
+		if (el.matches?.('.modal-overlay,.drawer-overlay,.sheet-overlay')) return true;
+		return isOverlayShell(el, ownerDoc || el.ownerDocument || document);
 	}
 
 	function resolveChordTarget(e, hint) {
+		lastPiercedLayer = null;
 		const path = e.composedPath ? e.composedPath() : [e.target];
 		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
 		if (isRfChrome(target)) return null;
 		const ownerDoc = target?.ownerDocument || document;
-		const isPierceLayer = (el) => {
-			if (!el || el.nodeType !== 1) return false;
-			// Known overlay class names stay a fast-path signal; the shell heuristic
-			// catches frameworks that name their scrims differently.
-			if (el.matches?.('.modal-overlay,.drawer-overlay,.sheet-overlay')) return true;
-			return isOverlayShell(el, ownerDoc);
-		};
 		if (typeof ownerDoc.elementsFromPoint === 'function' && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
 			for (const el of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
 				if (el.nodeType !== 1) continue;
-				if (isPierceLayer(el)) continue;
+				if (isPierceLayer(el)) { lastPiercedLayer = el; continue; }
 				if (isRfChrome(el)) continue;
 				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
 				// Document hit-testing retargets shadow descendants to their host.
@@ -2826,7 +3219,13 @@
 
 	function capturableEl(el) {
 		const styles = getComputedStyles(el);
+		const shadowRoot = el.getRootNode?.();
 		const data = {
+			// A selector rooted inside a shadow tree cannot be resolved from the
+			// document; recording the host keeps the export honest about that.
+			inShadowRoot: !!shadowRoot?.host,
+			shadowHost: shadowRoot?.host?.tagName?.toLowerCase() || null,
+			piercedLayer: lastPiercedLayer ? (classNameOf(lastPiercedLayer).split(/\s+/)[0] || lastPiercedLayer.tagName.toLowerCase()) : null,
 			selector: describeElement(el),
 			framePath: framePathFor(el),
 			tag: el.tagName.toLowerCase(),
@@ -2922,6 +3321,7 @@
 	}
 
 	function positionSelectionMarkers() {
+		let key = '';
 		for (const { el, node } of selMarkers) {
 			if (!el.isConnected) { node.style.display = 'none'; continue; }
 			const r = getViewportRect(el);
@@ -2930,7 +3330,9 @@
 			node.style.left = r.left + 'px';
 			node.style.width = r.width + 'px';
 			node.style.height = r.height + 'px';
+			key += el.isConnected ? r.top + ':' + r.left + ':' + r.width + ':' + r.height + '|' : 'x|';
 		}
+		return key;
 	}
 
 	function clearSelectionMarkers() {
@@ -3094,8 +3496,21 @@
 	const DOUBLE_TAP_MS = 300;
 
 	addFeedbackListener('keydown', (e) => {
-		if (e.altKey && e.shiftKey && String(e.key).toLowerCase() === 'r') {
+		// Option+Shift+R produces a composed character in `e.key` on macOS;
+		// `e.code` is layout- and modifier-independent.
+		if (e.altKey && e.shiftKey && (e.code === 'KeyR' || String(e.key).toLowerCase() === 'r')) {
 			if (popoverEl) { killEvent(e); resetPopoverPosition(); }
+			return;
+		}
+		// Non-pointer entry: annotate the focused element. Reuses the existing
+		// popover path, so keyboard users get the same editor as chord clicks.
+		if (e.altKey && e.shiftKey && e.code === 'KeyE') {
+			killEvent(e);
+			const doc = e.view?.document || e.target?.ownerDocument || document;
+			const focused = doc?.activeElement;
+			if (focused && focused.nodeType === 1 && focused !== doc.body && !isRfChrome(focused)) {
+				showPopover(focused, capturableEl(focused).data);
+			} else showToast('Focus an element first, then Alt+Shift+E');
 			return;
 		}
 		if (e.key === 'Escape') {
@@ -3113,11 +3528,13 @@
 					const v = editable.value !== undefined ? editable.value : editable.textContent;
 					dirty = !!String(v || '').trim();
 				}
-				if (dirty) { try { editable.blur(); } catch {} return; }
+				// One Escape consumes exactly one layer: without killEvent the page's
+				// own dialog closes at the same time as the feedback draft.
+				if (dirty) { killEvent(e); try { editable.blur(); } catch {} return; }
 			}
 			if (pickMode) { killEvent(e); exitPick(null); return; }
-			if (popoverEl) { cancelPopover(); return; }
-			if (panelEl && panelEl.style.display !== 'none') { closePanel(); return; }
+			if (popoverEl) { killEvent(e); cancelPopover(); return; }
+			if (panelEl && panelEl.style.display !== 'none') { killEvent(e); closePanel(); return; }
 		}
 		if (IS_CHORD(e)) {
 			if (!e.repeat) revealFab();
@@ -3153,6 +3570,46 @@
 		if (!IS_CHORD(e) && !hasAnnotations()) scheduleConcealFab();
 	}, true);
 
+	// A chord keyup can be lost (Cmd-Tab, focus entering a cross-origin frame).
+	// Without a reset the chrome stays pointer-transparent and clicks fall through
+	// to the page. Any later non-chord interaction is a safe release point.
+	function releaseChordFromFocusLoss() {
+		if (!chordWasActive) return;
+		chordWasActive = false;
+		syncChromeClickThrough();
+		hideOutline();
+	}
+	addEventListener('blur', releaseChordFromFocusLoss);
+	addEventListener('focusin', releaseChordFromFocusLoss);
+	addEventListener('pointerdown', (e) => {
+		if (chordWasActive && !e.altKey && !e.metaKey && !e.ctrlKey) releaseChordFromFocusLoss();
+	}, true);
+
+	// Touch devices have no Alt+chord. A stationary long-press annotates the
+	// element under the finger; any drag cancels it so scrolling still works.
+	let touchHoldTimer = null;
+	let touchStart = null;
+	addEventListener('touchstart', (e) => {
+		if (e.touches.length !== 1) return;
+		const t = e.touches[0];
+		touchStart = { x: t.clientX, y: t.clientY, el: t.target };
+		touchHoldTimer = setTimeout(() => {
+			touchHoldTimer = null;
+			const el = touchStart?.el;
+			if (el && el.nodeType === 1 && !isRfChrome(el)) showPopover(el, capturableEl(el).data);
+		}, 550);
+	}, { passive: true });
+	addEventListener('touchmove', (e) => {
+		const t = e.touches[0];
+		if (touchHoldTimer && touchStart && t && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+			clearTimeout(touchHoldTimer);
+			touchHoldTimer = null;
+		}
+	}, { passive: true });
+	const cancelTouchHold = () => { if (touchHoldTimer) { clearTimeout(touchHoldTimer); touchHoldTimer = null; } };
+	addEventListener('touchend', cancelTouchHold, { passive: true });
+	addEventListener('touchcancel', cancelTouchHold, { passive: true });
+
 	// A selector can point at a different component after a route swap, so closing is
 	// safer than silently retargeting an unsaved draft onto the new screen. But SPAs
 	// and analytics fire pushState/replaceState constantly without changing the URL
@@ -3160,37 +3617,71 @@
 	let lastRouteUrl = location.href;
 	function handleRouteChange() {
 		if (location.href === lastRouteUrl) return;
+		const from = lastRouteUrl;
 		lastRouteUrl = location.href;
 		if (!popoverEl && !pickMode && !chordGesture) return;
+		// Hash/query churn (analytics, filters, in-page anchors) does not swap
+		// the document, so destroying a draft here is pure loss.
+		if (!pickMode && !chordGesture && pageKey(from) === pageKey(location.href)) return;
 		pickMode = null;
 		setFeedbackCursor('');
 		hidePickBanner();
 		clearChordGesture();
+		// The pick-mode enter/exit path normally restores interactivity; route
+		// changes skipped it and left every tool control click-through.
+		syncChromeClickThrough();
 		hidePopover();
 		showToast('Draft selection closed after page navigation');
 	}
 	for (const method of ['pushState', 'replaceState']) {
-		const original = history[method];
-		history[method] = function (...args) {
-			const result = original.apply(this, args);
-			handleRouteChange();
-			return result;
-		};
+		try {
+			const original = history[method];
+			if (typeof original !== 'function' || original.__rfPatched) continue;
+			const patched = function (...args) {
+				const result = original.apply(this, args);
+				handleRouteChange();
+				return result;
+			};
+			patched.__rfPatched = true;
+			history[method] = patched;
+		} catch {
+			// A frozen or hostile `history` degrades to "no SPA close" instead
+			// of throwing here and aborting the rest of init.
+		}
 	}
 	addEventListener('popstate', handleRouteChange);
 	// Hash-router SPAs never touch the History API; without this their route
 	// changes would leave a draft pointing at the old screen.
 	addEventListener('hashchange', handleRouteChange);
 
-	// --- API ---
-	window.__SCOPE_FEEDBACK_API__ = {
-		markdown() { return toMarkdown(annotations); },
-		json() { return toFeedbackJSON(annotations); },
-		get annotations() { return annotations; },
-		clear() { annotations = []; save(); },
-		openPanel() { openPanel(); },
-		setProjectRoot,
-	};
+	// Another tab (or a same-origin frame instance) changed the shared record.
+	// Reconcile instead of letting the next save clobber it.
+	addEventListener('storage', (e) => {
+		if (e.key !== STORAGE_KEY) return;
+		reconcileStored();
+		if (panelRoot) renderPanel();
+		showToast('Annotations updated in another tab');
+	});
+	addEventListener('beforeunload', (e) => {
+		if (popoverEl && popoverDraftGuard?.()) { e.preventDefault(); e.returnValue = ''; }
+	});
+	// When a modal/popup closes, its top layer disappears; move our hosts back.
+	addEventListener('close', () => { chromeAnchorEl = null; reseatChrome(); }, true);
+	addEventListener('toggle', reseatChrome, true);
+
+	// The page-facing global is a harness affordance, not a product API. Under
+	// @grant none a page script would otherwise read every comment and call
+	// clear(). The dev-only test harness sets __RF_TEST_MODE__ before injecting.
+	if (window.__RF_TEST_MODE__) {
+		window.__SCOPE_FEEDBACK_API__ = {
+			markdown() { return toMarkdown(annotations); },
+			json() { return toFeedbackJSON(annotations); },
+			get annotations() { return annotations; },
+			clear() { markDeleted(annotations); annotations = []; save(); if (panelRoot) renderPanel(); },
+			openPanel() { openPanel(); },
+			setProjectRoot,
+		};
+	}
 
 	// --- Init ---
 	if (IS_TOP_FRAME) scanFeedbackFrames(document);
@@ -3198,4 +3689,14 @@
 	loadPopoverOffset();
 	createFab();
 	if (hasAnnotations()) revealFab();
+	else {
+		// A first-time user sees no chrome at all; one hint names the gesture and
+		// the keyboard alternative, then never shows again on this origin.
+		try {
+			if (!localStorage.getItem('rf_first_run_hint_v1')) {
+				localStorage.setItem('rf_first_run_hint_v1', '1');
+				showToast('Leave feedback: hold ' + CHORD_HINT + ' and click, or focus an element and press Alt+Shift+E');
+			}
+		} catch {}
+	}
 })();
