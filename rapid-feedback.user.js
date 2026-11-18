@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.19
+// @version      5.20
+// @note         v5.20: outline and selection markers follow top-layer dialogs/popups, so the blue ring is no longer painted behind the element being annotated
 // @note         v5.19: chord picking includes click-through text and guidance, so transcript gutter hints no longer select the entire editor
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
@@ -1126,6 +1127,20 @@
 		// during hydration, and our chrome should survive that.
 		document.documentElement.appendChild(host);
 		return { host, root };
+	}
+
+	// Dialogs and popups paint in the browser's top layer, above every z-index —
+	// a fixed host on <html> can never cover them. When the element being
+	// annotated lives in one, host the overlay chrome inside that same element so
+	// the outline and markers share its stacking context and stay visible.
+	function topLayerHostFor(el) {
+		try {
+			for (let cur = el; cur && cur.nodeType === 1; cur = parentOf(cur)) {
+				if (cur.matches(':modal')) return cur;
+				if (cur.hasAttribute('popover') && cur.matches(':popover-open')) return cur;
+			}
+		} catch {}
+		return null;
 	}
 
 	function shadowStyle() {
@@ -2556,8 +2571,18 @@
 	// stays under the standard chrome click-through rules.
 	let overlayChrome = null;
 
-	function ensureOverlayChrome() {
-		if (overlayChrome?.host?.isConnected) return overlayChrome;
+	function placeOverlayChrome(el) {
+		const host = overlayChrome?.host;
+		if (!host) return;
+		const parent = topLayerHostFor(el) || document.documentElement;
+		if (host.parentElement !== parent) parent.appendChild(host);
+	}
+
+	function ensureOverlayChrome(el) {
+		if (overlayChrome?.host?.isConnected) {
+			if (el) placeOverlayChrome(el);
+			return overlayChrome;
+		}
 		const { host, root } = createShadowRoot();
 		const s = document.createElement('style');
 		s.textContent = `
@@ -2568,6 +2593,7 @@
 `;
 		root.appendChild(s);
 		overlayChrome = { host, root };
+		if (el) placeOverlayChrome(el);
 		return overlayChrome;
 	}
 
@@ -2579,7 +2605,7 @@
 
 	function showOutline(el, variant) {
 		const v = variant || 'target';
-		const { root } = ensureOverlayChrome();
+		const { root } = ensureOverlayChrome(el);
 		if (!outlineEl || !outlineEl.isConnected) {
 			outlineEl = document.createElement('div');
 			outlineEl.className = 'rf-outline';
@@ -2878,7 +2904,7 @@
 	// the open-popover state number non-primary members 2..N (primary is 1).
 	function setSelectionMarkers(els, startIndex) {
 		clearSelectionMarkers();
-		const { root } = ensureOverlayChrome();
+		const { root } = ensureOverlayChrome(els[0]);
 		const base = startIndex || 0;
 		for (let i = 0; i < els.length; i++) {
 			const el = els[i];
