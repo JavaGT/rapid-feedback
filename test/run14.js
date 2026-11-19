@@ -4,7 +4,7 @@ const { POP, createReporter, withPage, waitForPopover } = require('./common');
 
 const KEY = 'scope_feedback_annotations';
 const HOSTS = `[...document.body.children, ...document.documentElement.children]`;
-const TOASTS = `(() => ${HOSTS}.filter(h => h.style?.bottom === '80px' && h.shadowRoot)
+const TOASTS = `(() => ${HOSTS}.filter(h => h.hasAttribute?.('data-rf-toast') && h.shadowRoot)
   .map(h => h.shadowRoot.textContent.trim()))()`;
 const PANEL = `${HOSTS}.find(h => h.shadowRoot?.querySelector('.rf-panel'))?.shadowRoot`;
 
@@ -258,6 +258,16 @@ module.exports = () => withPage(async (page) => {
 	});
 	r.check('a long-held press still suppresses the synthetic click',
 		(await page.evaluate(() => window.__longClicks)) === 0, '');
+
+	// --- Concurrent toasts must not paint on top of each other ---
+	await page.evaluate((k) => {
+		window.dispatchEvent(new StorageEvent('storage', { key: k }));
+		window.dispatchEvent(new StorageEvent('storage', { key: k }));
+	}, KEY);
+	const bottoms = await page.evaluate(`(() => ${HOSTS}
+		.filter(h => h.hasAttribute?.('data-rf-toast')).map(h => h.style.bottom))()`);
+	r.check('concurrent toasts stack without overlapping',
+		bottoms.length >= 2 && new Set(bottoms).size === bottoms.length, JSON.stringify(bottoms));
 
 	// --- A chord gesture whose keyup is lost cannot swallow the next click ---
 	await close();

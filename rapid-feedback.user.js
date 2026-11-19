@@ -1641,10 +1641,12 @@ ${COMMON_CSS}
 	// --- Toast (shadow DOM) ---
 	// `kind` gives errors a visible and semantic signal: a failed save must not
 	// look identical to "Saved" when the message is only glanced at.
+	const liveToasts = [];
 	function showToast(msg, kind) {
 		const isError = kind === 'error';
 		const isSuccess = kind === 'success';
 		const { host, root } = createShadowRoot({ transient: true });
+		host.setAttribute('data-rf-toast', '');
 		host.style.cssText = `all:initial;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:${Z.overlay};pointer-events:none`;
 		hardenHost(host);
 		const el = document.createElement('div');
@@ -1656,7 +1658,20 @@ ${COMMON_CSS}
 		el.setAttribute('role', isError ? 'alert' : 'status');
 		el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
 		root.appendChild(el);
-		setTimeout(() => host.remove(), isError ? 4000 : 2000);
+		// One stack authority: offset live toasts so a confirmation cannot sit
+		// on top of the message it supersedes, and close the gap when one expires.
+		const entry = { host };
+		liveToasts.push(entry);
+		const layoutToasts = () => liveToasts.forEach((e, i) => {
+			e.host.style.bottom = (80 + i * 44) + 'px';
+		});
+		layoutToasts();
+		setTimeout(() => {
+			const at = liveToasts.indexOf(entry);
+			if (at >= 0) liveToasts.splice(at, 1);
+			host.remove();
+			layoutToasts();
+		}, isError ? 4000 : 2000);
 	}
 
 	// --- FAB (shadow DOM) ---

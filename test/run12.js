@@ -7,7 +7,7 @@ const { POP, createReporter, withPage, waitFor, waitForPopover, waitForPopoverGo
 const SCRIPT = fs.readFileSync(path.join(__dirname, '..', 'rapid-feedback.user.js'), 'utf8');
 const KEY = 'scope_feedback_annotations';
 const HOSTS = `[...document.body.children, ...document.documentElement.children]`;
-const TOASTS = `(() => ${HOSTS}.filter(h => h.style?.bottom === '80px' && h.shadowRoot)
+const TOASTS = `(() => ${HOSTS}.filter(h => h.hasAttribute?.('data-rf-toast') && h.shadowRoot)
   .map(h => h.shadowRoot.textContent.trim()))()`;
 const PANEL = `${HOSTS}.find(h => h.shadowRoot?.querySelector('.rf-panel'))?.shadowRoot`;
 module.exports = async function run12() {
@@ -50,7 +50,7 @@ module.exports = async function run12() {
 		let state = await page.evaluate((k) => ({
 			backup: localStorage.getItem(k + '.corrupt'), count: window.__SCOPE_FEEDBACK_API__.annotations.length,
 			toasts: [...document.body.children, ...document.documentElement.children]
-				.filter(h => h.style?.bottom === '80px' && h.shadowRoot).map(h => h.shadowRoot.textContent.trim())
+				.filter(h => h.hasAttribute?.('data-rf-toast') && h.shadowRoot).map(h => h.shadowRoot.textContent.trim())
 		}), KEY);
 		check('corrupt blob is copied to the recovery key', state.backup === '{not json' && state.count === 0, JSON.stringify(state));
 		check('corrupt blob shows an unreadable toast', state.toasts.some(t => /unreadable/i.test(t)), JSON.stringify(state.toasts));
