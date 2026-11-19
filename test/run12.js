@@ -242,6 +242,17 @@ module.exports = async function run12() {
 			? [...p.querySelectorAll('.rf-sel-row .rf-sel-name')].map(r => r.textContent) : []; })()`);
 		check('select similar skips already-selected members', sim.length === 3 && new Set(sim).size === 3, JSON.stringify(sim));
 		await cancel();
+		// --- A cross-tab change to a rendered field must refresh the card ---
+		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.clear());
+		await seed({ annotations: [row('r1', 100, 'note', { text: 'Old text', selector: '#c1' })], deleted: [] });
+		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
+		const cardTitle = () => page.evaluate(`(() => { const panel = ${PANEL};
+			return panel?.querySelector('.rf-card-title')?.textContent || ''; })()`);
+		const beforeTitle = await cardTitle();
+		await seed({ annotations: [row('r1', 200, 'note', { text: 'New text', selector: '#c1' })], deleted: [] });
+		const afterTitle = await cardTitle();
+		check('panel card refreshes when cross-tab text changes',
+			beforeTitle === 'Old text' && afterTitle === 'New text', beforeTitle + ' -> ' + afterTitle);
 		// --- API gating: without the harness flag, no page-facing global is installed ---
 		await page.reload();
 		await page.evaluate(SCRIPT); // deliberately no __RF_TEST_MODE__

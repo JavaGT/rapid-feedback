@@ -547,8 +547,16 @@
 
 	function topClientPoint(e) {
 		const frame = e.view?.frameElement;
-		const offset = frame ? getViewportRect(frame) : null;
-		return { x: e.clientX + (offset?.left || 0), y: e.clientY + (offset?.top || 0) };
+		if (!frame) return { x: e.clientX, y: e.clientY };
+		// The event's client coordinates are in the frame's own (unscaled) CSS
+		// pixels, but the offset above is in top-viewport pixels. Apply the same
+		// frame scale getViewportRect uses before adding the offset.
+		const offset = getViewportRect(frame);
+		const sx = frame.clientWidth ? offset.width / frame.clientWidth : 1;
+		const sy = frame.clientHeight ? offset.height / frame.clientHeight : 1;
+		const fx = Number.isFinite(sx) && Math.abs(sx - 1) > 0.001 ? sx : 1;
+		const fy = Number.isFinite(sy) && Math.abs(sy - 1) > 0.001 ? sy : 1;
+		return { x: e.clientX * fx + offset.left, y: e.clientY * fy + offset.top };
 	}
 
 	// --- Svelte source location ---
@@ -728,8 +736,9 @@
 		if (!projectRoot || !file) return null;
 		const rel = String(file).replace(/^\.\//, '');
 		const abs = rel.startsWith('/') ? rel : projectRoot + '/' + rel;
-		// encodeURI leaves # and ? raw, truncating links whose path contains them.
-		const safePath = encodeURI(abs.replace(/#/g, '%23').replace(/\?/g, '%3F'));
+		// Encode first, then escape the two characters encodeURI leaves raw;
+		// replacing before encodeURI would double-escape the '%' to '%25'.
+		const safePath = encodeURI(abs).replace(/#/g, '%23').replace(/\?/g, '%3F');
 		return 'vscode://file' + safePath + ':' + (line || 1) + (column ? ':' + column : '');
 	}
 
@@ -3144,9 +3153,12 @@ ${COMMON_CSS}
 			const a = annotations[idx];
 			if (a) editAnnotationById(a.id, row => { row.comment = cel.textContent.trim(); });
 		}
+		// Every field the card rendering reads must be in the signature, or a
+		// cross-tab change to text/selector/target details leaves a stale card.
 		const sig = JSON.stringify([panelSortNewest, panelCategoryFilter, annotations.map(a => [
 			a.id, a.comment, a.category, a.url, a.source?.ref, a.adjustedStyles,
-			a.targets?.length, a.styleRestore ? 1 : 0,
+			a.text, a.selector, a.tag, a.href, a.styleRestore ? 1 : 0,
+			a.targets?.map(t => [t.selector, t.tag, t.domId, t.text, t.a11y?.name]),
 			pageKey(a.url) === pageKey(location.href)
 		])]);
 		if (sig === panelListSig && list.childElementCount) {
@@ -3995,7 +4007,12 @@ ${COMMON_CSS}
 	// the page when the browser synthesises the click after touchend.
 	let suppressClick = null;
 	addEventListener('touchstart', (e) => {
-		if (e.touches.length !== 1) return;
+		// A second finger means the user is pinching, scrolling or otherwise
+		// gesturing: a pending single-finger hold must not fire mid-gesture.
+		if (e.touches.length !== 1) {
+			if (touchHoldTimer) { clearTimeout(touchHoldTimer); touchHoldTimer = null; touchStart = null; }
+			return;
+		}
 		suppressClick = null;
 		const t = e.touches[0];
 		touchStart = { x: t.clientX, y: t.clientY, el: t.target };
@@ -4029,8 +4046,10 @@ ${COMMON_CSS}
 		suppressClick = null;
 	}, true);
 	addEventListener('touchmove', (e) => {
-		const t = e.touches[0];
-		if (touchHoldTimer && touchStart && t && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+		// Check every active touch: movement by the second finger must cancel the
+		// hold just as movement by the original finger does.
+		const moved = [...e.touches].some(t => touchStart && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12);
+		if (touchHoldTimer && touchStart && moved) {
 			clearTimeout(touchHoldTimer);
 			touchHoldTimer = null;
 		}

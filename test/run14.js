@@ -116,6 +116,20 @@ module.exports = () => withPage(async (page) => {
 		state.clicks === 0 && state.opened && /Long press me/.test(state.title), JSON.stringify(state));
 	await close();
 
+	// --- A second finger joining (or moving) cancels the pending long-press ---
+	await page.evaluate(() => {
+		const el = document.getElementById('lp-target');
+		const a = new Touch({ identifier: 1, target: el, clientX: 40, clientY: 40 });
+		el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true,
+			touches: [a], targetTouches: [a], changedTouches: [a] }));
+		const b = new Touch({ identifier: 2, target: el, clientX: 90, clientY: 50 });
+		el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true,
+			touches: [a, b], targetTouches: [a, b], changedTouches: [b] }));
+	});
+	await new Promise(resolve => setTimeout(resolve, 650));
+	const multi = await page.evaluate(`(() => !!${POP})()`);
+	r.check('a second finger cancels the long-press', multi === false, String(multi));
+
 	// --- A page-injected chrome marker must not make a subtree unannotatable ---
 	await page.evaluate(() => {
 		const d = document.createElement('div');

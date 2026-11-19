@@ -183,6 +183,24 @@ module.exports = async function run() {
   check('editor deep link carries root, line and column',
     sv.md.includes('vscode://file/repo/src/lib/Card.svelte:42:8'),
     sv.md.split('\n').filter(l => l.includes('vscode')).join(' | '));
+  // A file path containing '#' or '?' must be escaped exactly once.
+  await page.evaluate(() => {
+    document.getElementById('c4').__svelte_meta =
+      { loc: { file: '/repo/src/lib/Weird#Name?.svelte', line: 7, column: 3 } };
+  });
+  await page.keyboard.down('Alt'); await page.keyboard.down('Meta');
+  await chordClick('#c4');
+  await page.keyboard.up('Meta'); await page.keyboard.up('Alt');
+  await waitForPopover(page);
+  await page.evaluate(`(() => { const p = ${POP};
+    p.querySelector('.rf-popover-ta').value = 'weird path'; p.querySelector('.rf-btn-primary').click(); })()`);
+  await waitForPopoverGone(page);
+  const weird = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.markdown());
+  check('editor deep link escapes # and ? exactly once',
+    weird.includes('vscode://file/repo/src/lib/Weird%23Name%3F.svelte:7:3') && !weird.includes('%2523'),
+    weird.split('\n').filter(l => l.includes('vscode')).join(' | '));
+  // c4 is reused below for the no-meta disclosure check.
+  await page.evaluate(() => { delete document.getElementById('c4').__svelte_meta; });
   check('exports include computed visual context',
     sv.md.includes('Looks:') && svJson.includes('"looks"') && !svJson.includes('"styles"'),
     sv.md.split('\n').find(l => l.startsWith('Looks:')) || svJson.slice(0, 200));
