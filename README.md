@@ -19,7 +19,7 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 - **Hardened selectors** — attribute values are escaped so quotes/backslashes can't break them; ids/classes are `CSS.escape`d; ties get a positional qualifier and the final chain is re-checked; the `data-testid` / `data-test` / `data-cy` family outranks generic attributes; machine-generated ids (hashes, React uids) are skipped; and Tailwind noise (variant prefixes, arbitrary values, fractions, negatives, Svelte hashes) never reaches a selector
 - **Closed shadow roots** — the panel/popover internals are isolated from host-page CSS and DOM; chrome is owned by the instance (page copies of the marker are ignored), self-heals if a host is removed, and follows a target into a top-layer dialog. The page-facing test API is installed only in harness mode. Storage still uses the page origin's `localStorage`, so it is **not** a privacy boundary; a corrupt payload is copied to a `.corrupt` recovery key instead of being silently overwritten, and a bad row is skipped rather than wiping the session
 - **Refreshed theme** — green accent, rounded cards, pill category chips, softer shadows
-- **Svelte-aware feedback** — leaf-to-root nested component trails in the popover and exports, route-disambiguated refs (`projects/+page.svelte:15`), per-member and destination Source lines, `setProjectRoot()` for clickable `vscode://file/…:line:col` links, "Select similar" grouped by component file, and an explicit note when a production build hides source mapping
+- **Svelte-aware feedback** — leaf-to-root nested component trails in the popover and exports, route-disambiguated refs (`projects/+page.svelte:15`), per-member and destination Source lines, `rapidFeedback.setProjectRoot(path)` from the console for clickable `vscode://file/…:line:col` links, "Select similar" grouped by component file, and an explicit note when a production build hides source mapping
 - **Richer context** — curated computed visual styles, accessible descriptions and control states, heading levels, and structured context in JSON for developers diagnosing layout and interaction issues
 
 ## Interactions
@@ -27,7 +27,7 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | Gesture | Result |
 | --- | --- |
 | Chord + click | Annotate that element |
-| Long-press (touch) | Annotate the element under your finger; dragging cancels so scrolling still works |
+| Long-press (touch) | Annotate the element under your finger (with the same overlay-piercing hit-test as chord); dragging cancels so scrolling still works, and the page's synthetic click is suppressed |
 | `Alt+Shift+E` | Annotate the currently focused element (keyboard-only path) |
 | Chord + several clicks, then release | One annotation over all of them |
 | Chord + click, popover already open | Add that element to the current selection |
@@ -35,12 +35,14 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | `+ Add element`, then click | Add another element to the current selection |
 | ✎ in the panel | Reopen the selection on the page it came from; edit the comment in place anywhere else |
 | Chord, double-tap | Open/close the panel |
-| `Pick destination`, then click | Record where the element should move to |
+| `Pick destination`, then click | Record where the element should move to. Pick modes are pointer-driven; a keyboard-generated click has no meaningful coordinates |
 | `Esc` | Leave the comment box first when the draft holds work — membership and zoom changes count as work too — then close; query-only URL churn keeps the draft, and a dirty draft prompts before tab close. Escape is consumed so it cannot also dismiss the host page's dialog |
 | Panel `Cut All` | Click twice to confirm; the selection is wiped only after the export is confirmed on the clipboard. `Cut` behaves the same way for a draft |
 | `Alt+Shift+R` | Bring a dragged-offscreen popover back to its target without losing the draft |
 | ✎ with popover open | Same as `Alt+Shift+R` — return the popover to its target |
-| `⌘/Ctrl + Enter` | Submit from the comment box |
+| `⌘/Ctrl + Enter` | Submit from the comment box, or save an in-place panel comment edit |
+| Panel `?` | Show the gesture cheatsheet after the first-run hint expires |
+| Panel sort / filter | Reorder cards newest-first or narrow them to one category |
 
 Annotations carry stable ids and timestamps. Two tabs on one origin merge their records on write and on `storage` events (deleted rows stay deleted), so one tab can no longer silently erase another's work. A failed clipboard write never destroys the source, and a failed `localStorage` write never announces "Saved".
 
@@ -48,29 +50,51 @@ The userscript intentionally does not pierce cross-origin iframe contents from t
 parent page. Because the script has no `@noframes` directive, Tampermonkey can run a
 separate Rapid Feedback instance inside matching cross-origin frames.
 
+## Configuration
+
+From the browser console (a normal install, no harness flag needed):
+
+```js
+rapidFeedback.setProjectRoot('/absolute/path/to/repo')
+```
+
+This only enables `vscode://file/…:line:col` links in exports; it stores no feedback data. The
+`window.__SCOPE_FEEDBACK_API__` object is a **dev/test-only harness affordance**, enabled by
+`window.__RF_TEST_MODE__`; it is not a security boundary and is not part of the product API.
+
 ## Export format
 
 ```markdown
 # Feedback — Scope
-Page: /app/projects/example
+Page: https://example.test/app/projects/example
 Env: 1440×900 · Chrome on macOS
+Legend: → = destination, Group: = other selected elements, ⚠ = selector matches multiple elements
 
 ## 1. [GENERAL] Files
 > This is the displayed text on the element
 The user's comment goes here — clearly distinguished from the element text above.
 
+Source: src/lib/FilesLink.svelte:42 (nearest ancestor with source)
+Component: FilesLink.svelte:42 ← projects/+page.svelte:15
+Open: vscode://file/repo/src/lib/FilesLink.svelte:42:8
 A11y: role=link name="Files"
 Looks: display=inline-flex; color=rgb(…); padding=8px 12px; border-radius=6px
 Where: div.sections > a.section-link[href="/app/projects/.../files"] > div.link-main
+Frame: section.shell > dialog[open]
 Rect: 434×21
 
 → Destination: div.other-section > a.other-link
   Text: “Grades”
+  Source: src/lib/DetailsPanel.svelte:24
+  Component: projects/+page.svelte:15
+  Looks: display=inline-flex; color=rgb(…)
 Group: 3 elements (this + 2)
   • a#first-link "First"
     Where: div.sections > a#first-link
+    Source: src/lib/FilesLink.svelte:42
   • a#second-link "Second"
     Where: div.sections > a#second-link
+    Source: src/lib/FilesLink.svelte:48
 
 Tweak (all 3 elements):
   padding: 12px;

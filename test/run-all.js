@@ -1,4 +1,4 @@
-const suites = [require('./run'), require('./run2'), require('./run3'), require('./run4'), require('./run5'), require('./run6'), require('./run7'), require('./run8'), require('./run9'), require('./run10'), require('./run11'), require('./run12'), require('./run13')];
+const suites = [require('./run'), require('./run2'), require('./run3'), require('./run4'), require('./run5'), require('./run6'), require('./run7'), require('./run8'), require('./run9'), require('./run10'), require('./run11'), require('./run12'), require('./run13'), require('./run14')];
 
 (async () => {
 	let passed = 0;

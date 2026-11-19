@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.21
+// @version      5.22
+// @note         v5.22: one persistence/commit authority with honest success toasts, snapshot-based draft guards, token-checked chrome ownership, short-viewport popover, accessible controls and shared export view
 // @note         v5.21: hostile-review hardening — durable multi-tab storage, confirmed-copy cuts, honest save failures, resolvable selectors, redacted provenance, dirty-draft guards, hostile-page resilience and agent-readable exports
 // @note         v5.20: outline and selection markers follow top-layer dialogs/popups, so the blue ring is no longer painted behind the element being annotated
 // @note         v5.19: chord picking includes click-through text and guidance, so transcript gutter hints no longer select the entire editor
@@ -10,7 +11,7 @@
 // @note         v5.18: recover an unseen popover with Alt+Shift+R or the feedback button; reset stale dragged positions on demand
 // @note         v5.17: richer feedback context — nested Svelte component trails, shadow-safe metadata walks, curated visual context, expanded accessibility details, and destination/member source context
 // @note         v5.14: draggable popover (persisted per origin), post-submit "revert tweaks" on saved cards, heuristic overlay piercing, selector-ambiguity warnings in exports, two-step Clear confirm, hashchange routing, raw style-attribute restore points, idle-suspending anchor loop, panel list updates without wiping chrome, storage envelope, self-correcting chord-modifier latch, lost-target popover state, outline/markers moved into a shadow root
-// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
+// @note         v5.13: Svelte deep support — component name in popover, route-aware refs (+page.svelte), per-member Source lines, rapidFeedback.setProjectRoot() vscode:// links, select-similar by component file, prod-build disclosure, hardened meta access
 // @note         v5.12: class filter drops Tailwind variants/arbitrary values/fractions/negatives; pick modes unified behind one driver; chrome hosted on <html> so hydration wipes can't remove it
 // @note         v5.11: selectors skip machine-generated ids (hashes, React uids) and read data-test/data-cy; chord-hover preview glows blue; selection markers carry numbered order badges
 // @note         v5.10: selectors escape quotes and prefer a stable data-testid; corrupt saved rows no longer wipe the session; UI chrome lives in closed shadow roots; green theme refresh
@@ -152,9 +153,7 @@
 	const RF_PASSTHROUGH_ATTR = 'data-rf-passthrough';
 	// Hosts this instance actually created. A page-injected copy of the marker
 	// attribute must not make page regions unannotatable or flip click-through.
-	const ownedHosts = new WeakSet();
 	const chromeHosts = new Set();
-	let hostPendingTransient = false;
 	// One declared ladder instead of magic numbers repeated at six call sites:
 	// overlays (toast/banner) float above everything, the outline above markers,
 	// markers above the interactive surfaces.
@@ -169,6 +168,14 @@
 	let panelRoot = null;
 	let panelListEl = null;
 	let panelCountEl = null;
+	// Re-entrant guard: flushing an inline edit during a render commits again,
+	// which would otherwise render the list from inside its own rebuild.
+	let renderingPanel = false;
+	// Card-list signature: if a save changed nothing the cards display, skip the
+	// DOM rebuild (cross-tab updates and large histories are the costly cases).
+	let panelListSig = null;
+	let panelSortNewest = false;
+	let panelCategoryFilter = null;
 	let fabEl = null;
 	let popoverEl = null;
 	// Focus to return to when the popover closes; restored only if still live.
@@ -176,6 +183,12 @@
 	// Reports whether the open popover's draft holds user work worth protecting
 	// from a reflex Escape. Assigned in showPopover, cleared in hidePopover.
 	let popoverDraftGuard = null;
+	// Fingerprint of the current draft. Two-stage Escape compares against the
+	// fingerprint it already consumed, so a fresh edit re-arms the first stage.
+	let draftFingerprint = () => '';
+	let draftEscSignature = null;
+	// The record the open popover is editing, for "return to target" gestures.
+	let activeEditRef = null;
 
 	let popoverRoot = null;
 
@@ -191,11 +204,8 @@
 	let styleTargets = [];
 	// Map<Element, string|null> — the raw inline `style` attribute before the first
 	// tweak (null = no inline style). One restore point per element, not per prop.
-	let styleSnapshot = null; // eslint-disable-line no-unused-vars
+	let styleSnapshot = null;
 	let anchor = null;
-	// Anchor wake listeners for resize (scroll wakes are registered per-loop).
-	const resizeWaiters = new Set();
-	addEventListener('resize', () => { for (const wake of resizeWaiters) wake(); });
 
 	// Pointer events stop at iframe boundaries. Keep one handler registry so the
 	// top-level instance can listen inside same-origin frames without duplicating
@@ -222,6 +232,9 @@
 	function watchFeedbackDocument(doc) {
 		if (feedbackDocumentWatchers.has(doc)) return;
 		const observer = new MutationObserver(records => {
+			// A DOM change can flip which element is under the pointer; a cached
+			// hit-test from the previous frame would be stale.
+			inspectionCache.delete(doc);
 			const hasFrameChange = records.some(record => [...record.addedNodes, ...record.removedNodes].some(node => {
 				if (node.nodeType !== 1) return false;
 				return node.matches('iframe') || !!node.querySelector('iframe');
@@ -239,6 +252,8 @@
 		try { Object.defineProperty(doc, '__RF_BRIDGED_BY_TOP__', { value: true, configurable: false }); } catch {}
 		if (!feedbackEventDocuments.has(doc)) {
 			feedbackEventDocuments.add(doc);
+			// Scrolling inside a frame never reaches the top window's listener.
+			doc.addEventListener('scroll', () => inspectionCache.delete(doc), { capture: true, passive: true });
 			for (const { type, listener, options } of feedbackListeners) doc.addEventListener(type, listener, options);
 			if (pickMode && doc.documentElement) doc.documentElement.style.cursor = 'crosshair';
 		}
@@ -692,6 +707,8 @@
 			file: primary.file,
 			line: primary.line,
 			column: primary.column,
+			// The primary Source line uses the full relative path; frameRef's
+			// basename form is for the component trail. Both are pinned by exports.
 			ref: primary.file + (primary.line != null ? ':' + primary.line : ''),
 			viaAncestor: metaEl !== el,
 			components,
@@ -721,7 +738,7 @@
 		const role = el.getAttribute('role') || implicitRole(el);
 		if (role) out.role = role;
 		const tag = el.tagName.toLowerCase();
-		const label = el.getAttribute('aria-label') || labelFromLabelledBy(el) || el.getAttribute('alt') || el.getAttribute('title')
+		const label = el.getAttribute('aria-label') || textFromIds(el, 'aria-labelledby') || el.getAttribute('alt') || el.getAttribute('title')
 			|| (/^(button|a|summary|h[1-6])$/.test(tag) ? (el.textContent || '').trim() : '');
 		if (label) out.name = label.trim().replace(/\s+/g, ' ').slice(0, 80);
 		const description = textFromIds(el, 'aria-describedby');
@@ -740,10 +757,6 @@
 		if (el.required) states.required = 'true';
 		if (Object.keys(states).length) out.states = states;
 		return Object.keys(out).length ? out : null;
-	}
-
-	function labelFromLabelledBy(el) {
-		return textFromIds(el, 'aria-labelledby');
 	}
 
 	function textFromIds(el, attr) {
@@ -784,7 +797,8 @@
 		if (IS_MAC) os = 'macOS';
 		else if (/Win/.test(os)) os = 'Windows';
 		else if (/Linux/.test(os)) os = 'Linux';
-		return (m ? browser + ' ' + m[1] : browser) + ' on ' + os;
+		const labelBrowser = m ? browser + ' ' + m[1] : browser;
+		return { browser: labelBrowser, os, label: labelBrowser + ' on ' + os };
 	}
 
 	const SCOPE_CLASS_RE = /\.svelte-[a-z0-9]+/gi;
@@ -836,6 +850,51 @@
 		return Object.entries(looks || {}).map(([key, value]) => key + '=' + value).join('; ');
 	}
 
+	// One derivation of everything an export says about a record. Both builders
+	// are formatters over this view, so adding a field cannot update only one.
+	const WHERE_SEGMENTS_MEMBER = 4;
+	function annotationView(a) {
+		const src = a.source || null;
+		const editorUrl = src?.ref ? editorUrlFor(src.file, src.line, src.column) : null;
+		// Ambiguity belongs to the document the selector was captured in, not to
+		// whichever document happens to be current at export time.
+		const root = frameDocumentFor(a.framePath) || document;
+		let ambiguous = false;
+		if (a.selector) {
+			try { ambiguous = root.querySelectorAll(a.selector).length > 1; } catch {}
+		}
+		const d = a.destination;
+		const memberViews = (a.targets || []).map(t => ({
+			label: compactRefLabel(t),
+			where: compactAncestorChain(t.selector, WHERE_SEGMENTS_MEMBER),
+			frame: compactFramePath(t.framePath),
+			sourceRef: t.source?.ref || null,
+			component: componentTrail(t.source),
+			editorUrl: t.source?.ref ? editorUrlFor(t.source.file, t.source.line, t.source.column) : null,
+			looks: t.looks || null
+		}));
+		return {
+			label: targetLabel(a),
+			where: compactAncestorChain(a.selector),
+			frame: compactFramePath(a.framePath),
+			sourceRef: src?.ref || null,
+			sourceStatus: src?.status || null,
+			viaAncestor: !!src?.viaAncestor,
+			component: componentTrail(src),
+			editorUrl,
+			ambiguous,
+			looks: annotationLooks(a),
+			destination: d ? {
+				where: compactAncestorChain(d.selector, WHERE_SEGMENTS_MEMBER),
+				frame: compactFramePath(d.framePath),
+				sourceRef: d.source?.ref || null,
+				component: componentTrail(d.source),
+				looks: d.looks || null
+			} : null,
+			members: memberViews
+		};
+	}
+
 	function routeFromUrl(url) {
 		try { const u = new URL(url); return u.pathname + u.search; } catch { return url || ''; }
 	}
@@ -849,8 +908,8 @@
 		if (text) return text.length > 48 ? text.slice(0, 48) + '\u2026' : text;
 		const leaf = (a.selector || '').split(' > ').pop() || a.tag || 'element';
 		const stripped = stripScopeHashes(leaf) || leaf;
-		const hrefM = stripped.match(/\[href="([^"]+)"\]/);
-		if (hrefM) { const slug = hrefM[1].split('/').filter(Boolean).pop(); if (slug) return slug; }
+		const href = a.href || (stripped.match(/\[href="([^"]+)"\]/)?.[1]);
+		if (href) { const slug = String(href).split('?')[0].split('/').filter(Boolean).pop(); if (slug) return slug; }
 		return stripped;
 	}
 
@@ -902,8 +961,8 @@
 	function compactRefLabel(t) {
 		const leaf = (t.selector || '').split(' > ').pop() || '';
 		const tag = t.tag || leaf.match(/^[a-z0-9-]+/i)?.[0] || 'element';
-		const idM = leaf.match(/#([\w-]+)/);
-		return shortLabel(tag, idM?.[1], t.a11y?.name, t.text);
+		const id = t.domId || (leaf.match(/#([\w-]+)/)?.[1]);
+		return shortLabel(tag, id, t.a11y?.name, t.text);
 	}
 
 	function shortLabel(tag, id, name, text) {
@@ -919,12 +978,14 @@
 		const sel = a.selector || '';
 		const text = (a.text || '').trim().replace(/\s+/g, ' ');
 		if (text) hints.push({ key: 'Text', value: '"' + (text.length > 100 ? text.slice(0, 100) + '\u2026' : text) + '"' });
-		const hrefM = sel.match(/\[href="([^"]+)"\]/);
-		if (hrefM) hints.push({ key: 'Href', value: hrefM[1] });
-		const placeholderM = sel.match(/\[placeholder="([^"]+)"\]/);
-		if (placeholderM) hints.push({ key: 'Placeholder', value: '"' + placeholderM[1] + '"' });
-		const nameM = sel.match(/\[name="([^"]+)"\]/);
-		if (nameM) hints.push({ key: 'Name', value: '"' + nameM[1] + '"' });
+		// Prefer the values captured at selection time; the selector-string regexes
+		// are only a fallback for records saved before these fields existed.
+		const href = a.href || (sel.match(/\[href="([^"]+)"\]/)?.[1]);
+		if (href) hints.push({ key: 'Href', value: String(href).split('?')[0] });
+		const placeholder = a.placeholder || (sel.match(/\[placeholder="([^"]+)"\]/)?.[1]);
+		if (placeholder) hints.push({ key: 'Placeholder', value: '"' + placeholder + '"' });
+		const name = a.name || (sel.match(/\[name="([^"]+)"\]/)?.[1]);
+		if (name) hints.push({ key: 'Name', value: '"' + name + '"' });
 		return hints;
 	}
 
@@ -943,6 +1004,13 @@
 			u.search = '';
 			return u.origin + u.pathname + u.hash;
 		} catch { return String(value || ''); }
+	}
+
+	// A hash router's route looks like `#/…` or `#!…`; a plain `#anchor` does not
+	// swap views and must not destroy an unsaved draft.
+	function looksLikeRouteHash(hash) {
+		const h = String(hash || '').replace(/^#/, '');
+		return !!(h && (h[0] === '/' || h[0] === '!' || h.includes('/')));
 	}
 
 	// Keep useful repro context (?tab=, ?view=) but strip credential-like query
@@ -1000,6 +1068,12 @@
 			source: data.source || null,
 			a11y: data.a11y || null,
 			looks: data.looks || null,
+			// Raw attributes let labels and JSON hints avoid re-parsing escaped
+			// selectors; without persisting them the primary target falls back.
+			href: data.href || null,
+			placeholder: data.placeholder || null,
+			name: data.name || null,
+			domId: data.domId || null,
 			destination: data.destination || null,
 			targets: data.targets || null
 		};
@@ -1013,25 +1087,24 @@
 		const vp = getViewport();
 		lines.push('# Feedback \u2014 ' + mdInline(document.title));
 		lines.push('Page: ' + mdInline(pageUrl));
-		lines.push('Env: ' + vp.w + '\u00d7' + vp.h + ' \u00b7 ' + getBrowserInfo());
+		lines.push('Env: ' + vp.w + '\u00d7' + vp.h + ' \u00b7 ' + getBrowserInfo().label);
+		lines.push('Legend: \u2192 = destination, Group: = other selected elements, \u26a0 = selector matches multiple elements');
 		lines.push('');
 		for (let i = 0; i < items.length; i++) {
 			const a = items[i];
+			const v = annotationView(a);
 			const cat = (a.category || 'general').toUpperCase();
-			const label = targetLabel(a);
 			// One header per page: a batch collected across routes must not attribute
 			// every later item to the first page's URL.
 			if (i > 0 && a.url && a.url !== items[i - 1].url) lines.push('Page: ' + mdInline(a.url));
-			lines.push('## ' + (i + 1) + '. [' + cat + '] ' + mdInline(label));
+			lines.push('## ' + (i + 1) + '. [' + cat + '] ' + mdInline(v.label));
 			if (a.text) lines.push(mdBlock('> ' + a.text));
 			if (a.comment) lines.push(mdBlock(a.comment));
-			if (a.source?.ref) {
-				lines.push('Source: ' + mdInline(a.source.ref) + (a.source.viaAncestor ? ' (nearest ancestor with source)' : ''));
-				const trail = componentTrail(a.source);
-				if (trail) lines.push('Component: ' + mdInline(trail));
-				const eu = editorUrlFor(a.source.file, a.source.line, a.source.column);
-				if (eu) lines.push('Open: ' + eu);
-			} else if (a.source?.status === 'svelte-production-build') {
+			if (v.sourceRef) {
+				lines.push('Source: ' + mdInline(v.sourceRef) + (v.viaAncestor ? ' (nearest ancestor with source)' : ''));
+				if (v.component) lines.push('Component: ' + mdInline(v.component));
+				if (v.editorUrl) lines.push('Open: ' + v.editorUrl);
+			} else if (v.sourceStatus === 'svelte-production-build') {
 				lines.push('Source: unavailable \u2014 Svelte production build (dev mode required for file mapping)');
 			}
 			if (a.a11y) {
@@ -1044,54 +1117,46 @@
 				if (a.a11y.states) bits.push('state=' + Object.entries(a.a11y.states).map(([key, value]) => key + ':' + value).join(','));
 				if (bits.length) lines.push('A11y: ' + bits.join(' '));
 			}
-			const looks = annotationLooks(a);
-			if (looks) lines.push('Looks: ' + mdInline(formatLooks(looks)));
-			if (isSelectorAmbiguous(a.selector, resolveStoredMember(a))) lines.push('⚠ Selector matches multiple elements right now — it may drift');
-			const where = compactAncestorChain(a.selector);
-			if (where) lines.push('Where: ' + (a.inShadowRoot ? '(inside shadow root of <' + (a.shadowHost || 'host') + '>) ' : '') + where);
-			const frame = compactFramePath(a.framePath);
-			if (frame) lines.push('Frame: ' + frame);
+			if (v.looks) lines.push('Looks: ' + mdInline(formatLooks(v.looks)));
+			if (v.ambiguous) lines.push('⚠ Selector matches multiple elements right now — it may drift');
+			if (v.where) lines.push('Where: ' + (a.inShadowRoot ? '(inside shadow root of <' + (a.shadowHost || 'host') + '>) ' : '') + v.where);
+			if (v.frame) lines.push('Frame: ' + v.frame);
 			if (a.rect) lines.push('Rect: ' + a.rect.width + '\u00d7' + a.rect.height);
-			if (a.destination) {
+			if (v.destination) {
 				const d = a.destination;
-				lines.push('\u2192 Destination: ' + (compactAncestorChain(d.selector, 4) || d.selector));
-				const frame = compactFramePath(d.framePath);
-				if (frame) lines.push('  Frame: ' + frame);
+				const dv = v.destination;
+				lines.push('\u2192 Destination: ' + (dv.where || d.selector));
+				if (dv.frame) lines.push('  Frame: ' + dv.frame);
 				if (d.text) lines.push('  Text: \u201c' + d.text + '\u201d');
 				if (d.a11y?.name) lines.push('  A11y: name="' + d.a11y.name + '"');
-				if (d.source?.ref) {
-					lines.push('  Source: ' + d.source.ref);
-					const trail = componentTrail(d.source);
-					if (trail) lines.push('  Component: ' + trail);
+				if (dv.sourceRef) {
+					lines.push('  Source: ' + dv.sourceRef);
+					if (dv.component) lines.push('  Component: ' + dv.component);
 				}
-				if (d.looks) lines.push('  Looks: ' + formatLooks(d.looks));
+				if (dv.looks) lines.push('  Looks: ' + formatLooks(dv.looks));
 			}
 			// Every selected element is actionable, so each one gets its own line with
 			// the selector a developer would need — not just a label.
-			if (a.targets && a.targets.length) {
-				lines.push('Group: ' + (a.targets.length + 1) + ' elements (this + ' + a.targets.length + ')');
-				for (const t of a.targets) {
-					const label = compactRefLabel(t);
-					lines.push('  • ' + label);
+			if (v.members.length) {
+				lines.push('Group: ' + (v.members.length + 1) + ' elements (this + ' + v.members.length + ')');
+				v.members.forEach((mv, mi) => {
+					const t = a.targets[mi];
+					lines.push('  • ' + mv.label);
 					// The label already carries short text; only spell it out when it
 					// was too long to fit and got dropped.
 					const txt = (t.text || '').trim().replace(/\s+/g, ' ');
-					if (txt && !label.includes('"' + txt + '"')) {
+					if (txt && !mv.label.includes('"' + txt + '"')) {
 						lines.push('    Text: “' + (txt.length > 80 ? txt.slice(0, 80) + '…' : txt) + '”');
 					}
-				const w = compactAncestorChain(t.selector, 4);
-				if (w) lines.push('    Where: ' + w);
-				const frame = compactFramePath(t.framePath);
-				if (frame) lines.push('    Frame: ' + frame);
-					if (t.source?.ref) {
-						lines.push('    Source: ' + t.source.ref);
-						const trail = componentTrail(t.source);
-						if (trail) lines.push('    Component: ' + trail);
-						const eu = editorUrlFor(t.source.file, t.source.line, t.source.column);
-						if (eu) lines.push('    Open: ' + eu);
+					if (mv.where) lines.push('    Where: ' + mv.where);
+					if (mv.frame) lines.push('    Frame: ' + mv.frame);
+					if (mv.sourceRef) {
+						lines.push('    Source: ' + mv.sourceRef);
+						if (mv.component) lines.push('    Component: ' + mv.component);
+						if (mv.editorUrl) lines.push('    Open: ' + mv.editorUrl);
 					}
-					if (t.looks) lines.push('    Looks: ' + formatLooks(t.looks));
-				}
+					if (mv.looks) lines.push('    Looks: ' + formatLooks(mv.looks));
+				});
 			}
 			if (a.adjustedStyles && Object.keys(a.adjustedStyles).length) {
 				lines.push(a.targets?.length ? 'Tweak (all ' + (a.targets.length + 1) + ' elements):' : 'Tweak:');
@@ -1102,8 +1167,58 @@
 		return lines.join('\n');
 	}
 
+	function jsonItem(a, v, pageUrl) {
+		return {
+			id: a.id || null,
+			ts: a.ts || null,
+			url: a.url || null,
+			pageTitle: a.pageTitle || null,
+			route: routeFromUrl(a.url || pageUrl),
+			category: a.category || 'general',
+			comment: a.comment,
+			text: a.text || null,
+			label: v.label,
+			source: sourceForJSON(a.source),
+			editorUrl: v.editorUrl,
+			a11y: a.a11y || null,
+			selector: a.selector || null,
+			framePath: a.framePath || null,
+			where: v.where || null,
+			tag: a.tag || null,
+			rect: a.rect || null,
+			looks: v.looks,
+			adjustedStyles: a.adjustedStyles || null,
+			styleRestore: a.styleRestore || null,
+			selectorAmbiguous: v.ambiguous,
+			destination: a.destination ? {
+				selector: a.destination.selector,
+				framePath: a.destination.framePath || null,
+				tag: a.destination.tag || null,
+				text: a.destination.text || null,
+				a11y: a.destination.a11y,
+				source: sourceForJSON(a.destination.source),
+				looks: a.destination.looks || null,
+				where: v.destination.where || null
+			} : null,
+			groupSize: v.members.length ? v.members.length + 1 : 1,
+			targets: a.targets ? a.targets.map((t, i) => ({
+				selector: t.selector,
+				framePath: t.framePath || null,
+				tag: t.tag || null,
+				text: t.text || null,
+				a11y: t.a11y || null,
+				where: v.members[i].where || null,
+				rect: t.rect || null,
+				source: sourceForJSON(t.source),
+				editorUrl: v.members[i].editorUrl,
+				looks: t.looks || null
+			})) : null,
+			hints: extractHints(a)
+		};
+	}
+
 	function toFeedbackJSON(items) {
-		const bi = getBrowserInfo(), sp = bi.indexOf(' on ');
+		const bi = getBrowserInfo();
 		const vp = getViewport();
 		const pageUrl = items[0]?.url || location.href;
 		return {
@@ -1112,56 +1227,10 @@
 				url: pageUrl,
 				route: routeFromUrl(pageUrl),
 				viewport: vp,
-				browser: sp > 0 ? bi.slice(0, sp) : bi,
-				os: sp > 0 ? bi.slice(sp + 4) : ''
+				browser: bi.browser,
+				os: bi.os
 			},
-			items: items.map(a => ({
-				id: a.id || null,
-				ts: a.ts || null,
-				url: a.url || null,
-				pageTitle: a.pageTitle || null,
-				route: routeFromUrl(a.url || pageUrl),
-				category: a.category || 'general',
-				comment: a.comment,
-				text: a.text || null,
-				label: targetLabel(a),
-				source: sourceForJSON(a.source),
-				editorUrl: a.source?.ref ? editorUrlFor(a.source.file, a.source.line, a.source.column) : null,
-				a11y: a.a11y || null,
-				selector: a.selector || null,
-				framePath: a.framePath || null,
-				where: compactAncestorChain(a.selector) || null,
-				tag: a.tag || null,
-				rect: a.rect || null,
-				looks: annotationLooks(a),
-				adjustedStyles: a.adjustedStyles || null,
-				styleRestore: a.styleRestore || null,
-				selectorAmbiguous: isSelectorAmbiguous(a.selector, resolveStoredMember(a)),
-				destination: a.destination ? {
-					selector: a.destination.selector,
-					framePath: a.destination.framePath || null,
-					tag: a.destination.tag || null,
-					text: a.destination.text || null,
-					a11y: a.destination.a11y,
-					source: sourceForJSON(a.destination.source),
-					looks: a.destination.looks || null,
-					where: compactAncestorChain(a.destination.selector, 4)
-				} : null,
-				groupSize: a.targets?.length ? a.targets.length + 1 : 1,
-				targets: a.targets ? a.targets.map(t => ({
-					selector: t.selector,
-					framePath: t.framePath || null,
-					tag: t.tag || null,
-					text: t.text || null,
-					a11y: t.a11y || null,
-					where: compactAncestorChain(t.selector) || null,
-					rect: t.rect || null,
-					source: sourceForJSON(t.source),
-					editorUrl: t.source?.ref ? editorUrlFor(t.source.file, t.source.line, t.source.column) : null,
-					looks: t.looks || null
-				})) : null,
-				hints: extractHints(a)
-			}))
+			items: items.map(a => jsonItem(a, annotationView(a), pageUrl))
 		};
 	}
 
@@ -1212,11 +1281,14 @@
 	const DELETED_MAX = 200;
 	let deletedIds = new Set();
 	let corruptBackedUp = false;
+	let storageUnavailable = false;
+	let storageWarningShown = false;
 
-	function storedPayload() {
+	// Parsing is separate from reading so a cross-tab `storage` event can use its
+	// own newValue instead of re-reading (and so both paths recover corruption).
+	function parseStored(raw) {
+		if (!raw) return null;
 		try {
-			const raw = localStorage.getItem(STORAGE_KEY);
-			if (!raw) return null;
 			const parsed = JSON.parse(raw);
 			const rows = annotationRowsFromPayload(parsed);
 			if (!Array.isArray(rows)) return null;
@@ -1224,18 +1296,38 @@
 		} catch { return null; }
 	}
 
+	function storedPayload() {
+		let raw = null;
+		try { raw = localStorage.getItem(STORAGE_KEY); }
+		catch { storageUnavailable = true; return null; }
+		return parseStored(raw);
+	}
+
+	// One recovery authority for boot and cross-tab reads: keep a copy of a blob
+	// we could not parse, once, and say so honestly.
+	function recoverCorrupt(raw) {
+		if (!raw || corruptBackedUp) return;
+		try {
+			localStorage.setItem(STORAGE_KEY + '.corrupt', raw);
+			corruptBackedUp = true;
+			showToast('Saved data unreadable — recovery copy kept', 'error');
+		} catch {
+			// Quota exhaustion is itself a common cause of corruption; never claim
+			// a recovery copy that could not be written. Allow a later retry.
+			showToast('Saved data unreadable — recovery copy could not be kept', 'error');
+		}
+	}
+
 	function load() {
-		const rawStored = localStorage.getItem(STORAGE_KEY);
-		const stored = storedPayload();
+		let rawStored = null;
+		try { rawStored = localStorage.getItem(STORAGE_KEY); }
+		catch { storageUnavailable = true; return; }
+		const stored = parseStored(rawStored);
 		if (!stored) {
 			// A truncated/quota-corrupted blob used to be read as an empty session
 			// and then silently overwritten. Keep a recovery copy first — but an
 			// empty store is not corruption.
-			if (rawStored && !corruptBackedUp) {
-				corruptBackedUp = true;
-				try { localStorage.setItem(STORAGE_KEY + '.corrupt', rawStored); } catch {}
-				showToast('Saved data unreadable — recovery copy kept');
-			}
+			recoverCorrupt(rawStored);
 			return;
 		}
 		deletedIds = new Set(stored.deleted);
@@ -1244,9 +1336,12 @@
 
 	// Union this tab's copy with whatever is stored. Newest `ts` wins per id and
 	// tombstones stay deleted, so a merge cannot resurrect another tab's delete.
-	function reconcileStored() {
-		const stored = storedPayload();
-		if (!stored) return;
+	function reconcileStored(raw) {
+		const stored = raw !== undefined ? parseStored(raw) : storedPayload();
+		if (!stored) {
+			if (raw) recoverCorrupt(raw);
+			return;
+		}
 		const byId = new Map();
 		for (const a of annotations) byId.set(a.id, a);
 		for (const row of stored.rows) {
@@ -1266,25 +1361,51 @@
 	// Returns whether the write actually reached storage; callers must not
 	// announce "Saved" or close a draft on failure.
 	function save() {
+		if (storageUnavailable) {
+			if (!storageWarningShown) {
+				storageWarningShown = true;
+				showToast('Storage unavailable — session is in-memory only', 'error');
+			}
+			return false;
+		}
 		try {
 			reconcileStored();
 			localStorage.setItem(STORAGE_KEY, JSON.stringify({
 				annotations,
-				deleted: [...deletedIds].slice(-DELETED_MAX),
-				rev: Date.now()
+				deleted: [...deletedIds].slice(-DELETED_MAX)
 			}));
 			return true;
 		} catch {
-			showToast('Could not save — storage full');
+			showToast('Could not save — storage full', 'error');
 			return false;
 		}
 	}
 
-	function persist(fn) {
-		fn();
+	// One commit authority: every mutation is applied, written, and published to
+	// the panel from here. `persist` is the same path plus an optional *earned*
+	// success toast, so no caller can announce success after a failed write.
+	function commit(mutator) {
+		const result = mutator();
 		const ok = save();
 		if (panelRoot) renderPanel();
+		return { ok, result };
+	}
+
+	function persist(fn, successMsg) {
+		const { ok } = commit(fn);
+		if (ok && successMsg) showToast(successMsg);
 		return ok;
+	}
+
+	// Edits by stable id always advance ts, so a cross-tab newest-ts merge cannot
+	// erase an inline comment that was just saved in another tab.
+	function editAnnotationById(id, mutate, successMsg) {
+		const row = annotations.find(a => a.id === id);
+		if (!row) return false;
+		return persist(() => {
+			mutate(row);
+			row.ts = Date.now();
+		}, successMsg);
 	}
 
 	// The dragged popover position persists per origin so a reviewer who parks it
@@ -1306,18 +1427,14 @@
 	}
 
 	// --- Shadow DOM helpers ---
-	function createShadowRoot() {
+	function createShadowRoot({ transient = false } = {}) {
 		const host = document.createElement('div');
 		host.style.cssText = `all:initial;position:fixed;z-index:${Z.outline};pointer-events:none`;
 		// Every piece of our own chrome carries this marker, so isRfChrome can reject
 		// it by inspection rather than by keeping a list of hosts in sync.
 		host.setAttribute(RF_CHROME_ATTR, '');
-		if (hostPendingTransient) {
-			host.setAttribute('data-rf-transient', '1');
-			hostPendingTransient = false;
-		}
+		if (transient) host.setAttribute('data-rf-transient', '1');
 		try { Object.defineProperty(host, '__rfBootToken', { value: bootToken, configurable: false }); } catch {}
-		ownedHosts.add(host);
 		chromeHosts.add(host);
 		// Closed roots keep page scripts from reaching into the feedback UI — panel
 		// comments are none of the host page's business. Everything that needs the
@@ -1327,6 +1444,9 @@
 		// during hydration, and our chrome should survive that.
 		hardenHost(host);
 		document.documentElement.appendChild(host);
+		// A top layer beats any z-index. Seat every new host where the current
+		// chrome anchor lives so pick guidance and toasts stay visible in a dialog.
+		hostChromeAt(host, chromeAnchorEl);
 		return { host, root };
 	}
 
@@ -1416,26 +1536,31 @@
 	}
 
 	// --- Shared style strings (used inside shadow roots) ---
+	// One authority for the rules both surfaces render identically.
+	const COMMON_CSS = `*{margin:0;padding:0;box-sizing:border-box}
+.rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
+.rf-cat-btn{padding:4px 10px;border:1px solid #d7dfe5;border-radius:14px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783}
+.rf-cat-btn.active{border-color:#35ae70;background:#dff7e9;color:#146331}
+`;
 	function popoverStyles() {
 		return `
-*{margin:0;padding:0;box-sizing:border-box}
-.rf-popover{width:min(${POPOVER_W}px, calc(100vw - 2 * ${POPOVER_INSETS.pad}px));background:#fff;border:1px solid #d7dfe5;border-radius:12px;padding:16px;box-shadow:0 14px 45px rgba(23,32,45,0.18);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#18212b;pointer-events:auto}
+${COMMON_CSS}
+.rf-popover{width:min(${POPOVER_W}px, calc(100vw - 2 * ${POPOVER_INSETS.pad}px));max-height:calc(100dvh - 2 * ${POPOVER_INSETS.pad}px);overflow-y:auto;background:#fff;border:1px solid #d7dfe5;border-radius:12px;padding:16px;box-shadow:0 14px 45px rgba(23,32,45,0.18);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#18212b;pointer-events:auto}
 .rf-drag-handle{display:flex;justify-content:center;align-items:center;height:8px;margin:-6px 0 8px;cursor:grab;border-radius:6px}
 .rf-drag-handle::before{content:'';width:36px;height:4px;border-radius:2px;background:#d7dfe5}
 .rf-drag-handle:hover::before{background:#b9c6cf}
 .rf-dragging,.rf-dragging *{cursor:grabbing !important}
-.rf-lost{opacity:0.55;transition:opacity 0.15s}
+.rf-lost .rf-title,.rf-lost .rf-source,.rf-lost .rf-sub,.rf-lost .rf-quote,.rf-lost .rf-sel{opacity:0.55;transition:opacity 0.15s}
+.rf-lost-status{font-size:10px;color:#9b2c2c;margin:3px 0}
+.rf-btn-armed{border-color:#c0392b;background:#fdecea;color:#992b1f;font-weight:600}
 .rf-popover-ta{width:100%;min-height:60px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#f7f9fa;color:#18212b}
 .rf-popover-ta:focus{outline:2px solid #258a55;outline-offset:-1px}
-.rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
 .rf-btn:hover{background:#f1f4f6}
-.rf-btn-primary{background:#258a55;color:#fff;border-color:#258a55;font-weight:600}
-.rf-btn-primary:hover{background:#1f7a4a}
+.rf-btn-primary{background:#1f7a4a;color:#fff;border-color:#1f7a4a;font-weight:600}
+.rf-btn-primary:hover{background:#17653c}
 .rf-btn-sm{padding:4px 9px;font-size:11px;background:transparent;color:#697783;border-color:#d7dfe5}
-.rf-cat-btn{padding:4px 10px;border:1px solid #d7dfe5;border-radius:14px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783}
-.rf-cat-btn.active{border-color:#35ae70;background:#dff7e9;color:#146331}
 .rf-cat-bar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
-.rf-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end}
+.rf-actions{display:flex;gap:6px;margin-top:12px;justify-content:flex-end;position:sticky;bottom:0;background:#fff;padding-top:6px;z-index:1}
 .rf-tab-row{display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid #e3e9ee;padding-bottom:0}
 .rf-tab-btn{padding:6px 12px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783;border:none;border-bottom:2px solid transparent}
 .rf-tab-btn.active{color:#166534;border-bottom-color:#28a465;font-weight:600}
@@ -1466,12 +1591,13 @@
 .rf-dest-row{display:flex;gap:6px;align-items:center;margin-top:6px}
 .rf-dest-btn{font-size:11px;flex-shrink:0}
 .rf-dest-tag{font-family:monospace;font-size:10px;color:#2b6cb0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rf-sel-act:focus-visible,.rf-btn-icon:focus-visible,.rf-zoom-row button:focus-visible,.rf-tab-btn:focus-visible{outline:2px solid #1f7a4a;outline-offset:1px}
 `;
 	}
 
 	function panelStyles() {
 		return `
-*{margin:0;padding:0;box-sizing:border-box}
+${COMMON_CSS}
 .rf-panel{width:min(${PANEL_W}px, 100vw);max-width:100vw;height:100dvh;background:#f7f9fa;color:#18212b;display:flex;flex-direction:column;font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border-left:1px solid #d7dfe5;box-shadow:-14px 0 45px rgba(23,32,45,0.10);pointer-events:auto}
 .rf-panel-header{display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid #e3e9ee;flex-shrink:0}
 .rf-panel-header h2{margin:0;font-size:18px;font-weight:700;flex:1}
@@ -1483,32 +1609,57 @@
 .rf-card-cat{font-size:9px;padding:2px 7px;border-radius:10px;background:#dff7e9;color:#146331}
 .rf-comment{font-size:12px;padding:6px 8px;background:#f1f4f6;border-radius:6px;border-left:3px solid #d7dfe5;margin-bottom:4px;word-break:break-word}
 .rf-url{font-size:10px;color:#697783;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rf-btn{padding:6px 13px;border:1px solid #d7dfe5;border-radius:7px;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#fff;color:#18212b}
 .rf-btn-icon{background:0 0;border:none;color:#697783;cursor:pointer;padding:2px 6px;border-radius:3px;font-size:13px}
 .rf-btn-del{font-size:15px}
 .rf-empty{color:#697783;text-align:center;padding:32px 16px}
-.rf-cat-btn{padding:4px 10px;border:1px solid #d7dfe5;border-radius:14px;cursor:pointer;font:11px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:transparent;color:#697783}
-.rf-cat-btn.active{border-color:#35ae70;background:#dff7e9;color:#146331}
 .rf-popover-ta{width:100%;min-height:44px;padding:8px 10px;border:1px solid #d7dfe5;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;resize:vertical;background:#fff;color:#18212b}
 `;
 	}
 
 	// --- Toast (shadow DOM) ---
-	function showToast(msg) {
-		const { host, root } = createShadowRoot();
-		host.setAttribute('data-rf-transient', '1');
+	// `kind` gives errors a visible and semantic signal: a failed save must not
+	// look identical to "Saved" when the message is only glanced at.
+	function showToast(msg, kind) {
+		const isError = kind === 'error';
+		const isSuccess = kind === 'success';
+		const { host, root } = createShadowRoot({ transient: true });
 		host.style.cssText = `all:initial;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:${Z.overlay};pointer-events:none`;
 		hardenHost(host);
 		const el = document.createElement('div');
-		el.style.cssText = 'padding:8px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 18px rgba(23,32,45,0.25);background:#18212b;color:#fff';
+		const bg = isError ? '#b3261e' : isSuccess ? '#1f7a4a' : '#18212b';
+		el.style.cssText = 'padding:8px 16px;border-radius:8px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;box-shadow:0 6px 18px rgba(23,32,45,0.25);background:' + bg + ';color:#fff';
+		// Keep the message text exact — tests and users both match on it; severity
+		// is carried by colour, role and lifetime instead.
 		el.textContent = msg;
-		el.setAttribute('role', 'status');
-		el.setAttribute('aria-live', 'polite');
+		el.setAttribute('role', isError ? 'alert' : 'status');
+		el.setAttribute('aria-live', isError ? 'assertive' : 'polite');
 		root.appendChild(el);
-		setTimeout(() => host.remove(), 2000);
+		setTimeout(() => host.remove(), isError ? 4000 : 2000);
 	}
 
 	// --- FAB (shadow DOM) ---
+	// One button, three actions: its label and glyph must follow the state that
+	// determines what a click will actually do.
+	function syncFabPresentation() {
+		if (!fabEl) return;
+		const panelOpen = panelEl && panelEl.style.display !== 'none';
+		// On a narrow viewport the panel leaves no room for the FAB; conceal it
+		// rather than parking an invisible, focusable control off-screen.
+		if (panelOpen && innerWidth <= PANEL_W + 64) {
+			fabEl.btn.classList.remove('rf-fab-on');
+			fabEl.btn.tabIndex = -1;
+			fabEl.host.style.right = '20px';
+			return;
+		}
+		const icon = popoverEl ? '\u21ba' : panelOpen ? '\u2715' : '\u270f';
+		const label = popoverEl ? 'Return popover to target' : panelOpen ? 'Close feedback panel' : 'Open feedback panel';
+		fabEl.btn.textContent = icon;
+		fabEl.btn.setAttribute('aria-label', label);
+		fabEl.btn.title = label;
+		// Clear the open panel rather than sitting on top of its footer.
+		fabEl.host.style.right = panelOpen ? 'calc(min(380px, 100vw) + 20px)' : '20px';
+	}
+
 	function createFab() {
 		// A hydration wipe or a page script can remove the host; rebuild instead
 		// of returning forever after with a stale reference.
@@ -1523,14 +1674,17 @@
 		// Hidden is the default state, and hidden means untouchable — opacity alone
 		// still hit-tests, so a concealed FAB used to swallow clicks in that corner.
 		s.textContent = `
-.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 6px 16px rgba(23,32,45,0.25);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#258a55;pointer-events:none;opacity:0;transform:translateX(60px)}
+.rf-fab{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;box-shadow:0 6px 16px rgba(23,32,45,0.25);font-family:sans-serif;user-select:none;border:none;transition:opacity 0.2s,transform 0.2s;color:#fff;background:#1f7a4a;pointer-events:none;opacity:0;transform:translateX(60px)}
 .rf-fab.rf-fab-on{pointer-events:auto;opacity:1;transform:translateX(0)}
+.rf-fab:not(.rf-fab-on){visibility:hidden}
+.rf-fab:focus-visible{outline:2px solid #1f7a4a;outline-offset:2px}
 `;
 		root.appendChild(s);
 		adoptStyles(root);
 		const btn = document.createElement('button');
 		btn.className = 'rf-fab';
-		btn.setAttribute('aria-label', 'Feedback');
+		btn.tabIndex = -1; // a concealed button must not be a keyboard target
+		btn.setAttribute('aria-label', 'Open feedback panel');
 		btn.textContent = '\u270f';
 		btn.addEventListener('click', (e) => {
 			e.stopPropagation();
@@ -1540,12 +1694,15 @@
 		});
 		root.appendChild(btn);
 		fabEl = { host, root, btn };
+		syncFabPresentation();
 	}
 
 	function revealFab() {
 		if (!fabEl) createFab();
 		clearTimeout(fabGraceTimer);
 		fabEl.btn.classList.add('rf-fab-on');
+		fabEl.btn.tabIndex = 0;
+		syncFabPresentation(); // re-conceal immediately if the panel is open
 	}
 
 	addFeedbackListener('mousemove', (e) => {
@@ -1555,7 +1712,9 @@
 	}, true);
 
 	function concealFab() {
-		if (fabEl) fabEl.btn.classList.remove('rf-fab-on');
+		if (!fabEl) return;
+		fabEl.btn.classList.remove('rf-fab-on');
+		fabEl.btn.tabIndex = -1;
 	}
 
 	// The chord reveals the FAB, but concealing it the instant the chord ends
@@ -1715,7 +1874,7 @@
 			doc.addEventListener('scroll', anchor.wake, { capture: true, passive: true });
 			anchor.scrollDocuments.add(doc);
 		}
-		resizeWaiters.add(anchor.wake);
+		addEventListener('resize', anchor.wake);
 		// Attribute-only layout shifts (class/style/hidden) and scroll inside a
 		// page shadow root do not reach the window listener above.
 		anchor.wheelWake = () => anchor.wake();
@@ -1738,7 +1897,7 @@
 		removeEventListener('pointerdown', anchor.wheelWake, { capture: true });
 		anchor.attrObserver?.disconnect();
 		for (const doc of anchor.scrollDocuments) doc.removeEventListener('scroll', anchor.wake, { capture: true });
-		resizeWaiters.delete(anchor.wake);
+		removeEventListener('resize', anchor.wake);
 		anchor = null;
 	}
 
@@ -1748,7 +1907,6 @@
 
 	// --- Show popover (shadow DOM, tabbed comment-first) ---
 	function showPopover(el, data, initial) {
-		hostPendingTransient = true;
 		const prior = document.activeElement;
 		restoreFocusEl = prior && prior.nodeType === 1 && prior !== document.body && !isRfChrome(prior) ? prior : null;
 		chromeAnchorEl = el;
@@ -1758,7 +1916,7 @@
 		if (initial && Number.isInteger(initial.editIndex) && !initial.editRef && annotations[initial.editIndex]) {
 			initial.editRef = annotations[initial.editIndex];
 		}
-		const { host, root } = createShadowRoot();
+		const { host, root } = createShadowRoot({ transient: true });
 		// top:0;left:0 is load-bearing: the host is parked after <body>, so its
 		// static position sits at the end of document flow. Without an explicit
 		// origin, every translate3d placement is displaced downward by the whole
@@ -1794,7 +1952,6 @@
 		popover.appendChild(dragHandle);
 
 		const adjustedStyles = { ...(initial?.adjustedStyles || {}) };
-		let activeTab = 'comment';
 		let zoomTarget = el;
 		// curData tracks whichever element the popover currently describes, so the
 		// header, the style defaults and the saved annotation never disagree.
@@ -1805,10 +1962,10 @@
 		// editable: rows can be dropped, promoted or added while the popover is open.
 		let members = (initial?.members?.length ? initial.members : [el]).filter(m => m?.isConnected);
 		let missingMembers = [...(initial?.missingMembers || [])];
-		// Selection/zoom work is real draft work. Track it explicitly so a reflex
-		// Escape cannot discard it just because no comment text was typed.
-		let draftMutated = false;
-		const touchDraft = () => { draftMutated = true; };
+		// A deliberate draft mutation re-arms the two-stage Escape guard. Dirtiness
+		// itself is derived from an immutable opening snapshot, never from a latch,
+		// so undoing an action returns the draft to pristine.
+		const touchDraft = () => { draftEscSignature = null; };
 		let similarAdded = [];
 		if (!members.includes(el)) members.unshift(el);
 		// Assigned once the styles grid exists; zooming re-seeds it.
@@ -1883,15 +2040,19 @@
 		const upBtn = document.createElement('button');
 		upBtn.textContent = '\u25B2';
 		upBtn.title = 'Parent';
+		upBtn.setAttribute('aria-label', 'Parent');
 		const downBtn = document.createElement('button');
 		downBtn.textContent = '\u25BC';
 		downBtn.title = 'First child';
+		downBtn.setAttribute('aria-label', 'First child');
 		const prevBtn = document.createElement('button');
 		prevBtn.textContent = '\u25C0';
 		prevBtn.title = 'Previous sibling';
+		prevBtn.setAttribute('aria-label', 'Previous sibling');
 		const nextBtn = document.createElement('button');
 		nextBtn.textContent = '\u25B6';
 		nextBtn.title = 'Next sibling';
+		nextBtn.setAttribute('aria-label', 'Next sibling');
 		const zoomTag = document.createElement('span');
 		zoomTag.className = 'rf-zoom-tag';
 		zoomTag.textContent = compactLabel(zoomTarget);
@@ -1910,9 +2071,12 @@
 			if (!members.length) { setLostState(); return; }
 			// Reviving from a lost state must undo everything setLostState changed.
 			popover.classList.remove('rf-lost');
+			selEl.classList.remove('rf-lost-status');
 			submitBtn.title = '';
 			renderHeader();
-			setSelectionMarkers(members.slice(1), 1);
+			// Badge the non-primary members 1..N; the primary is called out as 1 in
+			// the selection header, so the visible numbering never starts at 2.
+			setSelectionMarkers(members.slice(1), 0);
 			setStyleTargets(members);
 			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
 			renderMembers();
@@ -1927,7 +2091,8 @@
 			popover.classList.add('rf-lost');
 			titleEl.textContent = 'Element no longer on page';
 			sourceEl.style.display = 'none';
-			selEl.textContent = curData.selector || '';
+			selEl.classList.add('rf-lost-status');
+			selEl.textContent = 'Source element gone — captured details will still be saved \u00b7 ' + (curData.selector || '');
 			quoteEl.style.display = 'none';
 			selList.innerHTML = '';
 			selList.style.display = 'none';
@@ -1968,13 +2133,15 @@
 					name.className = 'rf-sel-name';
 					const label = labels[i];
 					name.textContent = (i === 0 ? '● ' : '○ ') + label + (labels.filter(l => l === label).length > 1 ? ' (' + positionalLabel(m) + ')' : '');
-					name.title = describeElement(m);
+					const memberSource = capturableEl(m).data.source;
+					name.title = describeElement(m) + (memberSource?.ref ? '\nSource: ' + (componentTrail(memberSource, true) || memberSource.ref) : '');
 					row.appendChild(name);
 					if (i > 0) {
 						const star = document.createElement('button');
 						star.className = 'rf-sel-act';
 						star.textContent = '★';
 						star.title = 'Make primary';
+						star.setAttribute('aria-label', 'Make primary');
 						star.addEventListener('click', () => {
 							touchDraft();
 							members.splice(i, 1);
@@ -1987,6 +2154,7 @@
 					del.className = 'rf-sel-act';
 					del.textContent = '×';
 					del.title = 'Remove from selection';
+					del.setAttribute('aria-label', 'Remove from selection');
 					del.addEventListener('click', () => {
 						touchDraft();
 						members.splice(i, 1);
@@ -2009,7 +2177,8 @@
 					del.className = 'rf-sel-act';
 					del.textContent = '×';
 					del.title = 'Drop unresolvable member';
-					del.addEventListener('click', () => { missingMembers.splice(i, 1); renderMembers(); });
+					del.setAttribute('aria-label', 'Drop unresolvable member');
+					del.addEventListener('click', () => { touchDraft(); missingMembers.splice(i, 1); renderMembers(); });
 					row.appendChild(name);
 					row.appendChild(del);
 					selList.appendChild(row);
@@ -2101,27 +2270,43 @@
 		popover.appendChild(zoomRow);
 		const primaryHint = document.createElement('div');
 		primaryHint.className = 'rf-primary-hint';
-		primaryHint.textContent = '● Primary controls styles, zoom, destination, and exported Where';
+		primaryHint.textContent = '1 \u25cf Primary \u2014 controls styles, zoom, destination, and exported Where';
 		popover.appendChild(primaryHint);
 
-		// Tab row
+		// Tab row — a real tab pattern, so the selected panel and its relationship
+		// to the tab are available to assistive tech, not just a CSS class.
 		const tabRow = document.createElement('div');
 		tabRow.className = 'rf-tab-row';
+		tabRow.setAttribute('role', 'tablist');
+		tabRow.setAttribute('aria-label', 'Feedback editor');
 		const commentTab = document.createElement('button');
 		commentTab.className = 'rf-tab-btn active';
 		commentTab.textContent = 'Comment';
+		commentTab.id = 'rf-tab-comment';
+		commentTab.setAttribute('role', 'tab');
+		commentTab.setAttribute('aria-controls', 'rf-panel-comment');
+		commentTab.setAttribute('aria-selected', 'true');
+		commentTab.tabIndex = 0;
 		const stylesTab = document.createElement('button');
 		stylesTab.className = 'rf-tab-btn';
 		stylesTab.textContent = 'Styles';
+		stylesTab.id = 'rf-tab-styles';
+		stylesTab.setAttribute('role', 'tab');
+		stylesTab.setAttribute('aria-controls', 'rf-panel-styles');
+		stylesTab.setAttribute('aria-selected', 'false');
+		stylesTab.tabIndex = -1;
 		tabRow.appendChild(commentTab);
 		tabRow.appendChild(stylesTab);
 		popover.appendChild(tabRow);
 
 		// Comment body
 		const commentBody = document.createElement('div');
+		commentBody.id = 'rf-panel-comment';
+		commentBody.setAttribute('role', 'tabpanel');
+		commentBody.setAttribute('aria-labelledby', 'rf-tab-comment');
 		const ta = document.createElement('textarea');
 		ta.className = 'rf-popover-ta';
-		ta.placeholder = 'What should change?';
+		ta.placeholder = 'What should change? (⌘/Ctrl+Enter to submit)';
 		if (initial?.comment) ta.value = initial.comment;
 		commentBody.appendChild(ta);
 
@@ -2145,15 +2330,30 @@
 		// Pick destination
 		let destData = initial?.destination || null;
 		// A reflex Escape must not nuke real work, but a pristine draft closes
-		// normally — established single-Esc-dismiss flows (and suites) rely on
-		// it. Dirty = typed comment, style tweaks, destination, or category.
+		// normally. Compare against the OPENING state, not emptiness: clearing a
+		// destination or resetting saved tweaks is work, while reopening an
+		// annotation that already has them is not.
 		const openComment = initial?.comment || '';
 		const openCategory = initial?.category || activeCategory;
+		const openStyles = JSON.stringify(adjustedStyles);
+		const openDest = JSON.stringify(destData || null);
+		const openMembers = members.slice();
+		const openMissing = missingMembers.slice();
+		draftFingerprint = () => JSON.stringify([
+			ta.value, selCat, adjustedStyles, destData,
+			members.map(m => m.isConnected ? describeElement(m) : null),
+			missingMembers.map(r => r.selector)
+		]);
 		popoverDraftGuard = () => ta.value !== openComment
-			|| Object.keys(adjustedStyles).length > 0
-			|| !!destData
 			|| selCat !== openCategory
-			|| draftMutated;
+			|| JSON.stringify(adjustedStyles) !== openStyles
+			|| JSON.stringify(destData || null) !== openDest
+			|| members.length !== openMembers.length
+			|| members.some((m, i) => m !== openMembers[i])
+			|| missingMembers.length !== openMissing.length
+			|| missingMembers.some((r, i) => r !== openMissing[i]);
+		draftEscSignature = null;
+		activeEditRef = initial?.editRef || null;
 
 		const destRow = document.createElement('div');
 		destRow.className = 'rf-dest-row';
@@ -2162,13 +2362,20 @@
 		destBtn.textContent = destData ? 'Change destination' : 'Pick destination';
 		const destTag = document.createElement('span');
 		destTag.className = 'rf-dest-tag';
-		if (destData) destTag.textContent = '\u2192 ' + (compactAncestorChain(destData.selector, 2) || destData.selector);
+		if (destData) {
+			destTag.textContent = '\u2192 ' + (compactAncestorChain(destData.selector, 2) || destData.selector)
+				+ (destData.text ? ' \u00b7 ' + destData.text.slice(0, 32) : '');
+			destTag.title = (destData.source?.ref ? 'Source: ' + (componentTrail(destData.source, true) || destData.source.ref) + '\n' : '')
+				+ destData.selector;
+		}
 		const destClear = document.createElement('button');
 		destClear.className = 'rf-btn rf-btn-sm';
 		destClear.textContent = '\u00d7';
 		destClear.title = 'Clear destination';
+		destClear.setAttribute('aria-label', 'Clear destination');
 		destClear.style.display = destData ? 'block' : 'none';
 		destClear.addEventListener('click', () => {
+			touchDraft();
 			destData = null;
 			destTag.textContent = '';
 			destClear.style.display = 'none';
@@ -2203,6 +2410,9 @@
 
 		// Styles body
 		const stylesBody = document.createElement('div');
+		stylesBody.id = 'rf-panel-styles';
+		stylesBody.setAttribute('role', 'tabpanel');
+		stylesBody.setAttribute('aria-labelledby', 'rf-tab-styles');
 		stylesBody.style.display = 'none';
 		const stylesGrid = document.createElement('div');
 		stylesGrid.className = 'rf-styles-grid';
@@ -2263,6 +2473,7 @@
 		resetBtn.textContent = 'Reset';
 		resetBtn.style.cssText = 'margin-top:6px';
 		resetBtn.addEventListener('click', () => {
+			touchDraft();
 			setStyleTargets(styleTargets);
 			for (const k in adjustedStyles) delete adjustedStyles[k];
 			refreshStyleInputs();
@@ -2271,26 +2482,39 @@
 		stylesBody.appendChild(resetBtn);
 		popover.appendChild(stylesBody);
 
-		// Tab switching
-		commentTab.addEventListener('click', () => {
-			activeTab = 'comment';
-			commentTab.classList.add('active');
-			stylesTab.classList.remove('active');
-			commentBody.style.display = 'block';
-			stylesBody.style.display = 'none';
-		});
-		stylesTab.addEventListener('click', () => {
-			activeTab = 'styles';
-			stylesTab.classList.add('active');
-			commentTab.classList.remove('active');
-			commentBody.style.display = 'none';
-			stylesBody.style.display = 'block';
+		// Tab switching keeps semantics and roving focus in step with the visuals.
+		function selectTab(which) {
+			const comment = which === 'comment';
+			commentTab.classList.toggle('active', comment);
+			stylesTab.classList.toggle('active', !comment);
+			commentTab.setAttribute('aria-selected', String(comment));
+			stylesTab.setAttribute('aria-selected', String(!comment));
+			commentTab.tabIndex = comment ? 0 : -1;
+			stylesTab.tabIndex = comment ? -1 : 0;
+			commentBody.style.display = comment ? 'block' : 'none';
+			stylesBody.style.display = comment ? 'none' : 'block';
+			(comment ? commentTab : stylesTab).focus();
+		}
+		commentTab.addEventListener('click', () => selectTab('comment'));
+		stylesTab.addEventListener('click', () => selectTab('styles'));
+		tabRow.addEventListener('keydown', (e) => {
+			// Only unmodified keys belong to the tabs pattern; browser shortcuts
+			// such as Cmd/Ctrl+Arrow must keep their own meaning.
+			if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+			let next = null;
+			if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') next = commentTab.tabIndex === 0 ? stylesTab : commentTab;
+			else if (e.key === 'Home') next = commentTab;
+			else if (e.key === 'End') next = stylesTab;
+			if (!next) return;
+			e.preventDefault();
+			e.stopPropagation();
+			selectTab(next === commentTab ? 'comment' : 'styles');
 		});
 
 		// Actions
 		// The non-primary members, frozen into the shape the export and storage use.
 		function memberRefs() {
-			const refs = members.slice(1).map(captureMemberRef).concat(missingMembers);
+			const refs = members.slice(1).map(captureRef).concat(missingMembers);
 			return refs.length ? refs : null;
 		}
 
@@ -2336,6 +2560,7 @@
 			const comment = ta.value.trim();
 			if (!comment && !Object.keys(adjustedStyles).length) { showToast('Please enter a comment or adjust a style'); return; }
 			const annotationData = buildAnnotationData(comment);
+			let written = null;
 			const saved = persist(() => {
 				// Replace by identity, not raw index: the panel can delete other
 				// rows while this popover is open, shifting indices. If the
@@ -2352,6 +2577,7 @@
 					id: previous?.id || annotationData.id,
 					ts: Date.now()
 				});
+				written = replacement;
 				if (at >= 0) annotations[at] = replacement;
 				else if (previous) annotations[initial.editIndex] = replacement;
 				else annotations.push(replacement);
@@ -2360,6 +2586,15 @@
 			keepStyles();
 			hidePopover();
 			showToast('Saved');
+			// A save with the panel open has a visible post-condition: reveal the
+			// card that was just written, whether it was appended or edited in place.
+			if (panelRoot && panelEl && panelEl.style.display !== 'none' && panelListEl && written) {
+				const at = annotations.indexOf(written);
+				const card = panelCategoryFilter ? null
+					: panelListEl.querySelector('.rf-card[data-idx="' + at + '"]');
+				if (card) card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+				else panelListEl.scrollTop = panelSortNewest ? 0 : panelListEl.scrollHeight;
+			}
 		}
 
 		const actions = document.createElement('div');
@@ -2434,6 +2669,7 @@
 				domWatchers.push(watcher);
 			}
 		}
+		syncFabPresentation();
 		ta.focus();
 	}
 
@@ -2444,8 +2680,10 @@
 		showPopover(targets[0], capturableEl(targets[0]).data, { members: [...targets] });
 	}
 
-	// A selected element, frozen into the shape exports and storage read.
-	function captureMemberRef(el) {
+	// A selected element, frozen into the shape exports and storage read. Both
+	// members and destinations use this one authority; raw attributes are kept
+	// so labels/hints never have to parse values back out of an escaped selector.
+	function captureRef(el) {
 		const styles = getComputedStyles(el);
 		return {
 			selector: describeElement(el),
@@ -2456,6 +2694,10 @@
 			rect: getBoundingRect(el),
 			source: getSourceLoc(el),
 			looks: getLooks(styles),
+			href: el.getAttribute('href') || null,
+			placeholder: el.getAttribute('placeholder') || null,
+			name: el.getAttribute('name') || null,
+			domId: el.id || null
 		};
 	}
 
@@ -2481,13 +2723,16 @@
 		styleSnapshot = new Map();
 	}
 
+	// One restore primitive for live previews and saved post-submit undo.
+	function restoreRawStyle(el, raw) {
+		if (!el?.isConnected) return;
+		if (raw === null || raw === undefined) el.removeAttribute('style');
+		else el.setAttribute('style', raw);
+	}
+
 	function revertStyles() {
 		if (!styleSnapshot) return;
-		for (const [el, style] of styleSnapshot) {
-			if (!el.isConnected) continue;
-			if (style === null) el.removeAttribute('style');
-			else el.setAttribute('style', style);
-		}
+		for (const [el, style] of styleSnapshot) restoreRawStyle(el, style);
 		styleSnapshot = null;
 	}
 
@@ -2509,8 +2754,7 @@
 		for (const t of a.styleRestore.targets) {
 			const el = resolveStoredMember(t);
 			if (!el) continue;
-			if (t.style === null) el.removeAttribute('style');
-			else el.setAttribute('style', t.style);
+			restoreRawStyle(el, t.style);
 			reverted++;
 		}
 		if (reverted) showToast('Tweaks reverted on ' + reverted + ' element' + (reverted === 1 ? '' : 's'));
@@ -2536,9 +2780,10 @@
 		revertStyles();
 		popoverApi = null;
 		popoverDraftGuard = null;
+		activeEditRef = null;
+		draftEscSignature = null;
 		if (popoverEl) { popoverEl.remove(); popoverEl = null; popoverRoot = null; }
 		styleTargets = [];
-		styleSnapshot = null;
 		hideOutline();
 		clearSelectionMarkers();
 		stopAnchor();
@@ -2546,13 +2791,30 @@
 			try { restoreFocusEl.focus({ preventScroll: true }); } catch {}
 		}
 		restoreFocusEl = null;
+		syncFabPresentation();
+	}
+
+	// One dismissal authority. Pick entry, route change, cancel and keyboard
+	// recovery previously each hand-copied this sequence — one of those copies
+	// already caused a click-through regression. Callers only pick options.
+	function dismissTransient(reason, opts) {
+		pickMode = null;
+		setFeedbackCursor('');
+		hidePickBanner();
+		clearChordGesture();
+		syncChromeClickThrough();
+		hidePopover();
+		if (opts && opts.resetOffset && popoverOffset) {
+			popoverOffset = null;
+			savePopoverOffset();
+		}
+		draftEscSignature = null;
 	}
 
 	// Cancel/Esc: discard the draft AND the dragged position — an explicit
 	// "put everything back where it was" gesture.
 	function cancelPopover() {
-		if (popoverOffset) { popoverOffset = null; savePopoverOffset(); }
-		hidePopover();
+		dismissTransient('cancel', { resetOffset: true });
 	}
 
 	// --- Popover dragging ---
@@ -2652,9 +2914,17 @@
 		closeBtn.className = 'rf-btn-icon';
 		closeBtn.style.cssText = 'font-size:20px';
 		closeBtn.textContent = '\u00d7';
+		closeBtn.setAttribute('aria-label', 'Close feedback panel');
 		closeBtn.addEventListener('click', closePanel);
+		const helpBtn = document.createElement('button');
+		helpBtn.className = 'rf-btn-icon';
+		helpBtn.textContent = '?';
+		helpBtn.setAttribute('aria-label', 'Show feedback gestures');
+		helpBtn.title = 'Show feedback gestures';
+		helpBtn.addEventListener('click', () => showToast(CHORD_HINT + ' + click · long-press · Alt+Shift+E · double-tap opens this panel · Alt+Shift+R returns the popover'));
 		header.appendChild(h2);
 		header.appendChild(count);
+		header.appendChild(helpBtn);
 		header.appendChild(closeBtn);
 
 		const toolbar = document.createElement('div');
@@ -2666,25 +2936,52 @@
 			b.addEventListener('click', fn);
 			return b;
 		}
-		toolbar.appendChild(toolbarBtn('Copy', () => { if (annotations.length) copyText(toMarkdown(annotations)); else showToast('Nothing to export'); }));
-		toolbar.appendChild(toolbarBtn('JSON', () => { if (annotations.length) copyText(JSON.stringify(toFeedbackJSON(annotations))); else showToast('Nothing to export'); }));
+		const copyBtn = toolbarBtn('Copy', () => { if (annotations.length) copyText(toMarkdown(annotations)); else showToast('Nothing to export'); });
+		copyBtn.title = 'Copy feedback as Markdown';
+		toolbar.appendChild(copyBtn);
+		const jsonBtn = toolbarBtn('JSON', () => { if (annotations.length) copyText(JSON.stringify(toFeedbackJSON(annotations))); else showToast('Nothing to export'); });
+		jsonBtn.title = 'Copy feedback as JSON';
+		toolbar.appendChild(jsonBtn);
+		const sortBtn = toolbarBtn(panelSortNewest ? 'Newest first' : 'Oldest first', () => {
+			panelSortNewest = !panelSortNewest;
+			sortBtn.textContent = panelSortNewest ? 'Newest first' : 'Oldest first';
+			renderPanelList();
+		});
+		sortBtn.title = 'Change the order of saved feedback';
+		toolbar.appendChild(sortBtn);
+		const filterBtn = toolbarBtn('Filter: All', () => {
+			const ids = [null, ...CATEGORIES.map(c => c.id)];
+			panelCategoryFilter = ids[(ids.indexOf(panelCategoryFilter) + 1) % ids.length];
+			filterBtn.textContent = 'Filter: ' + (CATEGORIES.find(c => c.id === panelCategoryFilter)?.label || 'All');
+			renderPanelList();
+		});
+		filterBtn.title = 'Show only one category';
+		toolbar.appendChild(filterBtn);
 		const cutAllBtn = toolbarBtn('Cut All', async () => {
 			if (!annotations.length) { showToast('Nothing to cut'); return; }
 			if (!cutAllBtn.dataset.armed) {
 				cutAllBtn.dataset.armed = '1';
 				cutAllBtn.textContent = 'Really cut all?';
+				cutAllBtn.classList.add('rf-btn-armed');
 				showToast('Click Cut All again to confirm');
-				setTimeout(() => { if (cutAllBtn.dataset.armed) { delete cutAllBtn.dataset.armed; cutAllBtn.textContent = 'Cut All'; } }, 2500);
+				setTimeout(() => {
+					if (cutAllBtn.dataset.armed) {
+						delete cutAllBtn.dataset.armed;
+						cutAllBtn.textContent = 'Cut All';
+						cutAllBtn.classList.remove('rf-btn-armed');
+					}
+				}, 2500);
 				return;
 			}
 			delete cutAllBtn.dataset.armed;
 			cutAllBtn.textContent = 'Cut All';
+			cutAllBtn.classList.remove('rf-btn-armed');
 			// Wipe only after the export is confirmed on the clipboard.
 			const ok = await copyText(toMarkdown(annotations));
 			if (!ok) { showToast('Copy failed — nothing cut'); return; }
-			persist(() => { markDeleted(annotations); annotations = []; });
-			showToast('Cut');
+			persist(() => { markDeleted(annotations); annotations = []; }, 'Cut');
 		});
+		cutAllBtn.style.minWidth = '110px'; // reserve the armed label's width
 		toolbar.appendChild(cutAllBtn);
 		// Two-step in-panel confirm: one misclick shouldn't wipe everything, and
 		// native dialogs can't be trusted on pages that override window.confirm.
@@ -2693,14 +2990,22 @@
 			if (clearBtn.dataset.armed) {
 				delete clearBtn.dataset.armed;
 				clearBtn.textContent = 'Clear';
-				persist(() => { markDeleted(annotations); annotations = []; });
-				showToast('Cleared');
+				clearBtn.classList.remove('rf-btn-armed');
+				persist(() => { markDeleted(annotations); annotations = []; }, 'Cleared');
 				return;
 			}
 			clearBtn.dataset.armed = '1';
 			clearBtn.textContent = 'Really clear?';
-			setTimeout(() => { if (clearBtn.dataset.armed) { delete clearBtn.dataset.armed; clearBtn.textContent = 'Clear'; } }, 2500);
+			clearBtn.classList.add('rf-btn-armed');
+			setTimeout(() => {
+				if (clearBtn.dataset.armed) {
+					delete clearBtn.dataset.armed;
+					clearBtn.textContent = 'Clear';
+					clearBtn.classList.remove('rf-btn-armed');
+				}
+			}, 2500);
 		});
+		clearBtn.style.minWidth = '96px'; // reserve the armed label's width
 		toolbar.appendChild(clearBtn);
 
 		const list = document.createElement('div');
@@ -2713,15 +3018,29 @@
 			const card = listEl.querySelector('.rf-card[data-idx="' + idx + '"]');
 			const cel = card?.querySelector('.rf-comment');
 			if (!cel) return;
-			if (cel.getAttribute('contenteditable') === 'true') {
-				persist(() => { a.comment = cel.textContent.trim(); });
-				showToast('Comment saved');
-				return;
-			}
+			let saved = false;
+			const saveInline = () => {
+				if (saved) return;
+				saved = true;
+				// Leave edit mode explicitly: the panel-list signature optimization
+				// may legitimately skip a rebuild when the text did not change.
+				cel.removeAttribute('contenteditable');
+				cel.style.background = '';
+				cel.style.borderLeftColor = '';
+				editBtn.textContent = '\u270E';
+				editAnnotationById(a.id, row => { row.comment = cel.textContent.trim(); }, 'Comment saved');
+			};
+			if (cel.getAttribute('contenteditable') === 'true') { saveInline(); return; }
 			cel.setAttribute('contenteditable', 'true');
 			cel.style.background = '#fff';
 			cel.style.borderLeftColor = '#258a55';
 			editBtn.textContent = '✓';
+			// The inline editor is reachable from any page, so it needs the same
+			// commit affordances as the popover: click ✓, Ctrl/Cmd+Enter, or blur.
+			cel.addEventListener('blur', () => setTimeout(saveInline, 0), { once: true });
+			cel.addEventListener('keydown', (e) => {
+				if (IS_SAVE_KEY(e)) { e.preventDefault(); e.stopPropagation(); saveInline(); }
+			});
 			cel.focus();
 		}
 
@@ -2735,10 +3054,12 @@
 			const a = annotations[idx];
 			if (!a) return;
 			if (delBtn) {
-				persist(() => { markDeleted([a]); annotations.splice(idx, 1); });
-				showToast('Deleted');
+				persist(() => { markDeleted([a]); annotations.splice(idx, 1); }, 'Deleted');
 				return;
 			}
+			// Already editing this record? The documented ✎ gesture returns the
+			// open popover to its target; rebuilding it here would drop the draft.
+			if (popoverEl && activeEditRef === a) { resetPopoverPosition(); return; }
 			// Reopening the popover only makes sense on the page the annotation was
 			// taken on — the same selector can match an unrelated element elsewhere,
 			// which would silently retarget the annotation. Anywhere else, or when the
@@ -2784,7 +3105,9 @@
 		const sendQuick = () => {
 			const t = genTa.value.trim();
 			if (!t) return;
-			persist(() => { annotations.push(makeAnnotation({ comment: t, category: activeCategory })); });
+			const ok = persist(() => { annotations.push(makeAnnotation({ comment: t, category: activeCategory })); });
+			// A failed write must not erase the only copy of what the user typed.
+			if (!ok) return;
 			genTa.value = '';
 			showToast('Saved');
 		};
@@ -2808,7 +3131,10 @@
 	// footer) persists, so list scroll position and any in-flight inline comment
 	// edit survive every data change.
 	function renderPanelList() {
-		if (!panelListEl) return;
+		if (!panelListEl || renderingPanel) return;
+		if (panelEl && panelEl.style.display === 'none') return;
+		renderingPanel = true;
+		try {
 		const list = panelListEl;
 		const keepScroll = list.scrollTop;
 		// Flush an in-flight inline edit before its node is discarded, otherwise
@@ -2816,19 +3142,37 @@
 		for (const cel of [...list.querySelectorAll('.rf-comment[contenteditable="true"]')]) {
 			const idx = parseInt(cel.closest('.rf-card')?.getAttribute('data-idx'), 10);
 			const a = annotations[idx];
-			if (a) a.comment = cel.textContent.trim();
+			if (a) editAnnotationById(a.id, row => { row.comment = cel.textContent.trim(); });
 		}
+		const sig = JSON.stringify([panelSortNewest, panelCategoryFilter, annotations.map(a => [
+			a.id, a.comment, a.category, a.url, a.source?.ref, a.adjustedStyles,
+			a.targets?.length, a.styleRestore ? 1 : 0,
+			pageKey(a.url) === pageKey(location.href)
+		])]);
+		if (sig === panelListSig && list.childElementCount) {
+			list.scrollTop = keepScroll;
+			return;
+		}
+		panelListSig = sig;
 		list.innerHTML = '';
-		panelCountEl && (panelCountEl.textContent = String(annotations.length));
-		if (!annotations.length) {
+		const rows = [];
+		for (let i = 0; i < annotations.length; i++) {
+			const a = annotations[i];
+			if (panelCategoryFilter && a.category !== panelCategoryFilter) continue;
+			rows.push({ a, i });
+		}
+		if (panelSortNewest) rows.reverse();
+		panelCountEl && (panelCountEl.textContent = String(rows.length));
+		if (!rows.length) {
 			const empty = document.createElement('div');
 			empty.className = 'rf-empty';
-			empty.textContent = 'No annotations yet. ' + CHORD_HINT + ' any element.';
+			empty.textContent = annotations.length
+				? 'No feedback in this category.'
+				: 'No annotations yet. ' + CHORD_HINT + ' any element.';
 			list.appendChild(empty);
 			return;
 		}
-		for (let i = 0; i < annotations.length; i++) {
-			const a = annotations[i];
+		for (const { a, i } of rows) {
 			const card = document.createElement('div');
 			card.className = 'rf-card';
 			card.setAttribute('data-idx', String(i));
@@ -2840,7 +3184,8 @@
 			titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px';
 			const cardTitle = document.createElement('span');
 			cardTitle.className = 'rf-card-title';
-			cardTitle.textContent = shortSelector(a) || a.selector;
+			// Lead with what the reviewer said; the selector is secondary context.
+			cardTitle.textContent = targetLabel(a) || shortSelector(a) || a.selector;
 			titleRow.appendChild(cardTitle);
 			const catLabel = CATEGORIES.find(c => c.id === (a.category || 'general'))?.label || '';
 			if (catLabel) {
@@ -2890,6 +3235,7 @@
 				revBtn.className = 'rf-btn-icon rf-btn-revert';
 				revBtn.textContent = '⎌';
 				revBtn.title = 'Revert style tweaks to their originals';
+				revBtn.setAttribute('aria-label', 'Revert style tweaks');
 				revBtn.addEventListener('click', () => revertSavedTweaks(a));
 				right.appendChild(revBtn);
 			}
@@ -2897,10 +3243,12 @@
 			editBtn.className = 'rf-btn-icon';
 			editBtn.setAttribute('data-idx', String(i));
 			editBtn.textContent = '\u270E';
+			editBtn.setAttribute('aria-label', 'Edit annotation');
 			const delBtn = document.createElement('button');
 			delBtn.className = 'rf-btn-icon rf-btn-del';
 			delBtn.setAttribute('data-idx', String(i));
 			delBtn.textContent = '\u00d7';
+			delBtn.setAttribute('aria-label', 'Delete annotation');
 			right.appendChild(editBtn);
 			right.appendChild(delBtn);
 			body.appendChild(left);
@@ -2909,17 +3257,27 @@
 			list.appendChild(card);
 		}
 		list.scrollTop = keepScroll;
+		} finally { renderingPanel = false; }
 	}
 
+	let panelReturnFocus = null;
 	function openPanel() {
 		ensurePanelShell();
 		hostChromeAt(panelEl, chromeAnchorEl);
 		panelEl.style.setProperty('display', 'block', 'important');
 		renderPanelList();
+		syncFabPresentation();
+		panelReturnFocus = document.activeElement?.nodeType === 1 ? document.activeElement : null;
+		if (!popoverEl) panelRoot?.querySelector('.rf-panel-header button')?.focus();
 	}
 
 	function closePanel() {
 		if (panelEl) panelEl.style.setProperty('display', 'none', 'important');
+		syncFabPresentation();
+		if (panelReturnFocus?.isConnected) {
+			try { panelReturnFocus.focus({ preventScroll: true }); } catch {}
+		}
+		panelReturnFocus = null;
 	}
 
 	// --- Chord-hold outline & selection markers ---
@@ -2947,8 +3305,9 @@
 		s.textContent = `
 @keyframes rf-outline-pulse{0%,100%{opacity:1}50%{opacity:0.45}}
 .rf-outline{position:fixed;pointer-events:none;border-radius:3px;transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s}
-.rf-marker{position:fixed;pointer-events:none;border:2px solid #258a55;border-radius:3px;background:rgba(37,138,85,0.08);transition:top 0.05s,left 0.05s,width 0.05s,height 0.05s}
-.rf-marker-badge{position:absolute;top:-9px;left:-9px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#258a55;border:2px solid #fff;color:#fff;font:700 11px/14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(23,32,45,0.35)}
+.rf-marker{position:fixed;top:0;left:0;pointer-events:none;border:2px solid #258a55;border-radius:3px;background:rgba(37,138,85,0.08);transition:transform 0.05s,width 0.05s,height 0.05s}
+.rf-marker-badge{position:absolute;top:-9px;left:-9px;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#1f7a4a;border:2px solid #fff;color:#fff;font:700 11px/14px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;text-align:center;box-shadow:0 2px 6px rgba(23,32,45,0.35)}
+@media (prefers-reduced-motion: reduce){.rf-outline{animation:none !important}.rf-outline,.rf-marker{transition:none}}
 `;
 		root.appendChild(s);
 		adoptStyles(root);
@@ -3002,7 +3361,7 @@
 	const PICK_MODES = {
 		member: {
 			banner: 'Click an element to add to the selection',
-			color: '#258a55',
+			color: '#1f7a4a',
 			outline: 'member',
 			rejectIf: (el, pm) => ((pm.draft?.members || []).includes(el) ? 'Already selected' : null),
 			convert: (el) => el,
@@ -3012,12 +3371,12 @@
 			color: '#2b6de8',
 			outline: 'dest',
 			rejectIf: (el, pm) => (el === pm.sourceEl ? 'That is the source element' : null),
-			convert: (el) => captureDestination(el),
+			convert: (el) => captureRef(el),
 		},
 	};
 
 	function enterPick(kind, sourceEl, sourceData, draft) {
-		hidePopover();
+		dismissTransient('pick');
 		pickMode = { kind, sourceEl, sourceData, draft };
 		setFeedbackCursor('crosshair');
 		syncChromeClickThrough();
@@ -3047,8 +3406,7 @@
 	function showPickBanner(kind) {
 		hidePickBanner();
 		const spec = PICK_MODES[kind];
-		hostPendingTransient = true;
-		const { host, root } = createShadowRoot();
+		const { host, root } = createShadowRoot({ transient: true });
 		host.style.cssText = `all:initial;position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:${Z.overlay};pointer-events:none`;
 		hardenHost(host);
 		root.appendChild(shadowStyle());
@@ -3076,40 +3434,43 @@
 		if (pickBannerEl) { pickBannerEl.remove(); pickBannerEl = null; }
 	}
 
-	function destTargetFrom(e) {
+	// One hit-test policy for chord and pick modes. The options preserve the
+	// genuinely different bookkeeping (shadow retargeting for chords, sticky
+	// pierced-layer tracking for pick) without duplicating the scan itself.
+	function resolvePiercedTarget(e, hint, opts) {
+		const o = opts || {};
+		if (o.resetPierced) lastPiercedLayer = null;
 		const path = e.composedPath ? e.composedPath() : [e.target];
-		let el = path.find(n => n && n.nodeType === 1) || e.target;
-		if (!el || el.nodeType !== 1) return null;
-		const ownerDoc = el.ownerDocument || document;
-		// The chord path pierces scrims; pick mode used to record the scrim
-		// itself. Use the same rejection rule so both gestures agree.
-		if (isPierceLayer(el, ownerDoc) && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
-			lastPiercedLayer = el;
-			for (const below of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
-				if (below === el || below.nodeType !== 1 || isRfChrome(below)) continue;
-				if (isPierceLayer(below, ownerDoc)) continue;
-				if (below === ownerDoc.body || below === ownerDoc.documentElement) continue;
-				el = below;
+		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
+		if (!target || target.nodeType !== 1 || isRfChrome(target)) return null;
+		const ownerDoc = target.ownerDocument || document;
+		const shouldPierce = !o.onlyIfTargetIsLayer || isPierceLayer(target, ownerDoc);
+		if (shouldPierce && typeof ownerDoc.elementsFromPoint === 'function'
+			&& Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
+			const stack = inspectionElementsAt(ownerDoc, e.clientX, e.clientY);
+			for (let si = 0; si < Math.min(stack.length, 12); si++) {
+				const el = stack[si];
+				if (el.nodeType !== 1) continue;
+				if (isPierceLayer(el, ownerDoc)) {
+					lastPiercedLayer = el;
+					continue;
+				}
+				if (isRfChrome(el)) continue;
+				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
+				if (o.preserveComposedPath) {
+					let root = target?.getRootNode?.();
+					while (root?.host && root.host !== el) root = root.host.getRootNode();
+					if (root?.host !== el) target = el;
+				} else target = el;
 				break;
 			}
 		}
-		if (isRfChrome(el)) return null;
-		if (el === ownerDoc.body || el === ownerDoc.documentElement) return null;
-		return el;
+		if (!target || target.nodeType !== 1 || target === ownerDoc.body || target === ownerDoc.documentElement) return null;
+		return target;
 	}
 
-	function captureDestination(el) {
-		const styles = getComputedStyles(el);
-		return {
-			selector: describeElement(el),
-			framePath: framePathFor(el),
-			tag: el.tagName.toLowerCase(),
-			text: getTextSnippet(el),
-			a11y: getA11y(el),
-			rect: getBoundingRect(el),
-			source: getSourceLoc(el),
-			looks: getLooks(styles),
-		};
+	function destTargetFrom(e) {
+		return resolvePiercedTarget(e, null, { onlyIfTargetIsLayer: true });
 	}
 
 	// --- Events ---
@@ -3123,18 +3484,36 @@
 		if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
 	}
 
+	// One draft contract for both surfaces, used by Escape and beforeunload.
+	function draftDirty() {
+		if (!popoverEl || !popoverDraftGuard) return false;
+		try { return !!popoverDraftGuard(); } catch { return false; }
+	}
+	function panelQuickDirty() {
+		const gen = panelRoot?.querySelector('.rf-panel-footer textarea');
+		return !!(panelEl && panelEl.style.display !== 'none' && gen && String(gen.value || '').trim());
+	}
+
+	// One ownership authority. The boot guard distrusts a bare marker attribute,
+	// so the hit-test must too: a page-injected <div data-rf-chrome> under <html>
+	// must never make a subtree unannotatable. Re-injected instances reuse the
+	// same boot token, so stamped hosts from a prior injection are still ours.
+	function isOwnChrome(node) {
+		if (!node || node.nodeType !== 1) return false;
+		if (chromeHosts.has(node)) return true;
+		return node.hasAttribute?.(RF_CHROME_ATTR)
+			&& node.parentElement === node.ownerDocument?.documentElement
+			&& !!bootToken
+			&& node.__rfBootToken === bootToken;
+	}
+
 	// Walks out through shadow boundaries as well as up the light tree: composedPath
 	// hands us nodes from inside our own shadow roots, and those must never be
 	// annotatable either.
 	function isRfChrome(el) {
 		if (!el || el.nodeType !== 1) return false;
 		for (let node = el; node;) {
-			// Only hosts we created (or the tool's own direct children of <html>)
-			// count. A page element that copies the attribute stays annotatable.
-			if (node.nodeType === 1 && (
-				ownedHosts.has(node)
-				|| (node.hasAttribute?.(RF_CHROME_ATTR) && node.parentElement === node.ownerDocument?.documentElement)
-			)) return true;
+			if (isOwnChrome(node)) return true;
 			const root = node.getRootNode?.();
 			node = root && root.host ? root.host : node.parentElement;
 		}
@@ -3165,8 +3544,17 @@
 	// the override synchronously (before any page event can use it). The browser
 	// still owns paint order, clipping and transforms; no bounding-box guessing.
 	const inspectionStyles = new WeakMap();
+	const inspectionCache = new WeakMap();
 	let inspectionOverrideWorks = true;
+	// A chord hover is one hit-test per frame at nearly the same point. Reuse a
+	// fresh result while the pointer barely moves; the global pointer-events
+	// override is what invalidates style across the whole document.
+	addEventListener('scroll', () => inspectionCache.delete(document), { capture: true, passive: true });
+	addEventListener('resize', () => inspectionCache.delete(document), { passive: true });
 	function inspectionElementsAt(ownerDoc, x, y) {
+		const cached = inspectionCache.get(ownerDoc);
+		if (cached && performance.now() - cached.at < 80
+			&& Math.abs(cached.x - x) < 6 && Math.abs(cached.y - y) < 6) return cached.result;
 		if (!inspectionOverrideWorks) return ownerDoc.elementsFromPoint(x, y);
 		let style = inspectionStyles.get(ownerDoc);
 		if (!style?.isConnected) {
@@ -3181,8 +3569,11 @@
 		}
 		const rootEl = ownerDoc.documentElement;
 		rootEl.classList.add('rf-inspection');
-		try { return ownerDoc.elementsFromPoint(x, y); }
+		let result;
+		try { result = ownerDoc.elementsFromPoint(x, y); }
 		finally { rootEl.classList.remove('rf-inspection'); }
+		inspectionCache.set(ownerDoc, { x, y, at: performance.now(), result });
+		return result;
 	}
 
 	function isPierceLayer(el, ownerDoc) {
@@ -3194,27 +3585,7 @@
 	}
 
 	function resolveChordTarget(e, hint) {
-		lastPiercedLayer = null;
-		const path = e.composedPath ? e.composedPath() : [e.target];
-		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
-		if (isRfChrome(target)) return null;
-		const ownerDoc = target?.ownerDocument || document;
-		if (typeof ownerDoc.elementsFromPoint === 'function' && Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
-			for (const el of inspectionElementsAt(ownerDoc, e.clientX, e.clientY)) {
-				if (el.nodeType !== 1) continue;
-				if (isPierceLayer(el)) { lastPiercedLayer = el; continue; }
-				if (isRfChrome(el)) continue;
-				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
-				// Document hit-testing retargets shadow descendants to their host.
-				// Preserve the more precise composed-path target in that case.
-				let root = target?.getRootNode?.();
-				while (root?.host && root.host !== el) root = root.host.getRootNode();
-				if (root?.host !== el) target = el;
-				break;
-			}
-		}
-		if (!target || target.nodeType !== 1 || target === ownerDoc.body || target === ownerDoc.documentElement) return null;
-		return target;
+		return resolvePiercedTarget(e, hint, { resetPierced: true, preserveComposedPath: true });
 	}
 
 	function capturableEl(el) {
@@ -3234,7 +3605,11 @@
 			looks: getLooks(styles),
 			rect: getBoundingRect(el),
 			source: getSourceLoc(el),
-			a11y: getA11y(el)
+			a11y: getA11y(el),
+			href: el.getAttribute('href') || null,
+			placeholder: el.getAttribute('placeholder') || null,
+			name: el.getAttribute('name') || null,
+			domId: el.id || null
 		};
 		return { el, data };
 	}
@@ -3300,7 +3675,8 @@
 
 	// Each marker overlays its element and carries a numbered badge, so a growing
 	// multi-select reads as an ordered list on the page itself. startIndex lets
-	// the open-popover state number non-primary members 2..N (primary is 1).
+	// the open-popover state number the non-primary members 1..N (the primary is
+	// labelled 1 in the popover header, so the on-page list starts at 1 too).
 	function setSelectionMarkers(els, startIndex) {
 		clearSelectionMarkers();
 		const { root } = ensureOverlayChrome(els[0]);
@@ -3323,14 +3699,28 @@
 	function positionSelectionMarkers() {
 		let key = '';
 		for (const { el, node } of selMarkers) {
-			if (!el.isConnected) { node.style.display = 'none'; continue; }
+			if (!el.isConnected) { node.style.display = 'none'; key += 'x|'; continue; }
 			const r = getViewportRect(el);
 			node.style.display = 'block';
-			node.style.top = r.top + 'px';
-			node.style.left = r.left + 'px';
-			node.style.width = r.width + 'px';
-			node.style.height = r.height + 'px';
-			key += el.isConnected ? r.top + ':' + r.left + ':' + r.width + ':' + r.height + '|' : 'x|';
+			// Rect reads are unavoidable, but layout writes are not: a marker that
+			// has not moved keeps its cached transform, and transforms are compositor
+			// work instead of a four-property layout invalidation per frame.
+			const rectKey = r.top + ':' + r.left + ':' + r.width + ':' + r.height;
+			if (node._rfRectKey !== rectKey) {
+				node._rfRectKey = rectKey;
+				node.style.transform = 'translate3d(' + r.left + 'px,' + r.top + 'px,0)';
+				node.style.width = r.width + 'px';
+				node.style.height = r.height + 'px';
+				// Keep the order badge on-screen for edge-anchored elements.
+				const badge = node.firstElementChild;
+				if (badge) {
+					badge.style.top = r.top < 12 ? 'auto' : '-9px';
+					badge.style.bottom = r.top < 12 ? '-9px' : 'auto';
+					badge.style.left = r.left < 12 ? 'auto' : '-9px';
+					badge.style.right = r.left < 12 ? '-9px' : 'auto';
+				}
+			}
+			key += rectKey + '|';
 		}
 		return key;
 	}
@@ -3345,7 +3735,9 @@
 	function shouldCaptureChord(e) {
 		if (isRfChrome(e.target)) return false;
 		if (e.button != null && e.button !== 0) return false;
-		return IS_CHORD(e) || isLiveChordGesture();
+		// An armed but unresolved gesture owns the release even after its wall
+		// clock expires; only a resolved gesture stops capturing.
+		return IS_CHORD(e) || isLiveChordGesture() || !!(chordWasActive && chordGesture && !chordGesture.opened);
 	}
 
 	function finishChordGesture(e) {
@@ -3478,7 +3870,7 @@
 	}, CAPTURE);
 
 	addFeedbackListener('click', (e) => {
-		if (!isLiveChordGesture() && !IS_CHORD(e)) return;
+		if (!isLiveChordGesture() && !IS_CHORD(e) && !(chordWasActive && chordGesture && !chordGesture.opened)) return;
 		// Swallow the click so the host page never sees it, but leave the gesture
 		// open while the chord is down.
 		killEvent(e);
@@ -3514,25 +3906,32 @@
 			return;
 		}
 		if (e.key === 'Escape') {
-			// Escape from inside a comment box: when the draft holds real work
-			// (typed comment, tweaks, destination, category), blur out instead
-			// of nuking it — a second Escape then closes normally. A pristine
-			// draft, or focus outside any input, closes immediately.
-			// The inner textarea stopPropagation guards cannot do this alone
-			// because this document-capture listener runs first.
-			const editable = eventFromEditable(e);
-			if (editable) {
-				let dirty = false;
-				try { dirty = !!(popoverEl && popoverDraftGuard && popoverDraftGuard()); } catch { dirty = false; }
-				if (!dirty && !popoverEl && panelEl && panelEl.style.display !== 'none') {
-					const v = editable.value !== undefined ? editable.value : editable.textContent;
-					dirty = !!String(v || '').trim();
-				}
-				// One Escape consumes exactly one layer: without killEvent the page's
-				// own dialog closes at the same time as the feedback draft.
-				if (dirty) { killEvent(e); try { editable.blur(); } catch {} return; }
-			}
+			// Pick mode is always the top layer.
 			if (pickMode) { killEvent(e); exitPick(null); return; }
+			// Dirty state, not focus, decides whether the first Escape protects
+			// work: clicking a category chip or style button moves focus off the
+			// textarea, and that must not turn Escape into a discard shortcut.
+			const editable = eventFromEditable(e);
+			if (draftDirty()) {
+				killEvent(e);
+				const sig = draftFingerprint();
+				if (draftEscSignature === sig) {
+					draftEscSignature = null;
+					cancelPopover();
+					return;
+				}
+				draftEscSignature = sig;
+				if (editable) { try { editable.blur(); } catch {} }
+				return;
+			}
+			if (panelQuickDirty()) {
+				killEvent(e);
+				if (draftEscSignature === 'panel') { draftEscSignature = null; closePanel(); return; }
+				draftEscSignature = 'panel';
+				if (editable) { try { editable.blur(); } catch {} }
+				return;
+			}
+			draftEscSignature = null;
 			if (popoverEl) { killEvent(e); cancelPopover(); return; }
 			if (panelEl && panelEl.style.display !== 'none') { killEvent(e); closePanel(); return; }
 		}
@@ -3576,6 +3975,9 @@
 	function releaseChordFromFocusLoss() {
 		if (!chordWasActive) return;
 		chordWasActive = false;
+		// A lost keyup would otherwise leave an unresolved gesture that swallows
+		// the next unrelated click (the wall-clock safety valve no longer applies).
+		clearChordGesture();
 		syncChromeClickThrough();
 		hideOutline();
 	}
@@ -3589,16 +3991,43 @@
 	// element under the finger; any drag cancels it so scrolling still works.
 	let touchHoldTimer = null;
 	let touchStart = null;
+	// A long-press that opened an editor must not also activate a link/button in
+	// the page when the browser synthesises the click after touchend.
+	let suppressClick = null;
 	addEventListener('touchstart', (e) => {
 		if (e.touches.length !== 1) return;
+		suppressClick = null;
 		const t = e.touches[0];
 		touchStart = { x: t.clientX, y: t.clientY, el: t.target };
 		touchHoldTimer = setTimeout(() => {
 			touchHoldTimer = null;
-			const el = touchStart?.el;
-			if (el && el.nodeType === 1 && !isRfChrome(el)) showPopover(el, capturableEl(el).data);
+			const held = touchStart;
+			if (!held) return;
+			// Resolve the same "thing" the chord path would: pierce transparent
+			// guidance layers and re-check the element under the recorded point.
+			const synthetic = {
+				clientX: held.x, clientY: held.y, target: held.el,
+				composedPath: () => [held.el], view: window
+			};
+			const el = resolveChordTarget(synthetic, held.el) || held.el;
+			if (el && el.nodeType === 1 && !isRfChrome(el)) {
+				// Suppress by the *touched* node and point, not the pierced target:
+				// the browser's synthetic click goes to the layer under the finger.
+				suppressClick = { el: held.el, x: held.x, y: held.y, until: performance.now() + 600 };
+				showPopover(el, capturableEl(el).data);
+			}
 		}, 550);
 	}, { passive: true });
+	// Capture before the page sees the synthetic click.
+	addEventListener('click', (e) => {
+		if (!suppressClick) return;
+		const live = performance.now() < suppressClick.until;
+		const path = e.composedPath ? e.composedPath() : [e.target];
+		const point = topClientPoint(e);
+		const near = Math.abs(point.x - suppressClick.x) < 24 && Math.abs(point.y - suppressClick.y) < 24;
+		if (live && (path.includes(suppressClick.el) || near)) killEvent(e);
+		suppressClick = null;
+	}, true);
 	addEventListener('touchmove', (e) => {
 		const t = e.touches[0];
 		if (touchHoldTimer && touchStart && t && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
@@ -3607,30 +4036,39 @@
 		}
 	}, { passive: true });
 	const cancelTouchHold = () => { if (touchHoldTimer) { clearTimeout(touchHoldTimer); touchHoldTimer = null; } };
-	addEventListener('touchend', cancelTouchHold, { passive: true });
-	addEventListener('touchcancel', cancelTouchHold, { passive: true });
+	// The synthetic click follows touchend, so the suppression window starts at
+	// release, not when the hold timer fired (which a long press can precede by
+	// much more than 600 ms).
+	addEventListener('touchend', () => {
+		cancelTouchHold();
+		if (suppressClick) suppressClick.until = performance.now() + 600;
+	}, { passive: true });
+	addEventListener('touchcancel', () => { cancelTouchHold(); suppressClick = null; }, { passive: true });
 
 	// A selector can point at a different component after a route swap, so closing is
 	// safer than silently retargeting an unsaved draft onto the new screen. But SPAs
 	// and analytics fire pushState/replaceState constantly without changing the URL
 	// — only an actual location change counts as navigation.
 	let lastRouteUrl = location.href;
-	function handleRouteChange() {
+	function handleRouteChange(reason) {
 		if (location.href === lastRouteUrl) return;
-		const from = lastRouteUrl;
+		const from = new URL(lastRouteUrl, location.href);
+		const to = new URL(location.href, location.href);
 		lastRouteUrl = location.href;
 		if (!popoverEl && !pickMode && !chordGesture) return;
-		// Hash/query churn (analytics, filters, in-page anchors) does not swap
-		// the document, so destroying a draft here is pure loss.
-		if (!pickMode && !chordGesture && pageKey(from) === pageKey(location.href)) return;
-		pickMode = null;
-		setFeedbackCursor('');
-		hidePickBanner();
-		clearChordGesture();
-		// The pick-mode enter/exit path normally restores interactivity; route
-		// changes skipped it and left every tool control click-through.
-		syncChromeClickThrough();
-		hidePopover();
+		// Query churn (analytics, filters) never swaps a document. Plain in-page
+		// anchors keep the draft when reached through a hashchange; a pushState
+		// hash change is an SPA route, and route-shaped hashes swap views too.
+		const docChanged = from.origin + from.pathname !== to.origin + to.pathname;
+		const hashChanged = from.hash !== to.hash;
+		// Chrome fires popstate as well as hashchange for `location.hash = …`,
+		// so the in-page-anchor exemption applies to both (route-shaped hashes
+		// still tear down).
+		if (!docChanged && (!hashChanged || ((reason === 'hashchange' || reason === 'popstate') && !looksLikeRouteHash(to.hash)))) {
+			anchor?.wake?.();
+			return;
+		}
+		dismissTransient('route');
 		showToast('Draft selection closed after page navigation');
 	}
 	for (const method of ['pushState', 'replaceState']) {
@@ -3639,7 +4077,7 @@
 			if (typeof original !== 'function' || original.__rfPatched) continue;
 			const patched = function (...args) {
 				const result = original.apply(this, args);
-				handleRouteChange();
+				handleRouteChange('history');
 				return result;
 			};
 			patched.__rfPatched = true;
@@ -3649,25 +4087,36 @@
 			// of throwing here and aborting the rest of init.
 		}
 	}
-	addEventListener('popstate', handleRouteChange);
+	addEventListener('popstate', () => handleRouteChange('popstate'));
 	// Hash-router SPAs never touch the History API; without this their route
 	// changes would leave a draft pointing at the old screen.
-	addEventListener('hashchange', handleRouteChange);
+	addEventListener('hashchange', () => handleRouteChange('hashchange'));
 
 	// Another tab (or a same-origin frame instance) changed the shared record.
 	// Reconcile instead of letting the next save clobber it.
 	addEventListener('storage', (e) => {
 		if (e.key !== STORAGE_KEY) return;
-		reconcileStored();
+		// Reconcile from the event payload, not a second synchronous read of storage.
+		// A synthetic event can omit newValue; fall back to reading it then.
+		reconcileStored(e.newValue === null ? undefined : e.newValue);
 		if (panelRoot) renderPanel();
 		showToast('Annotations updated in another tab');
 	});
 	addEventListener('beforeunload', (e) => {
-		if (popoverEl && popoverDraftGuard?.()) { e.preventDefault(); e.returnValue = ''; }
+		if (draftDirty() || panelQuickDirty()) { e.preventDefault(); e.returnValue = ''; }
 	});
 	// When a modal/popup closes, its top layer disappears; move our hosts back.
-	addEventListener('close', () => { chromeAnchorEl = null; reseatChrome(); }, true);
-	addEventListener('toggle', reseatChrome, true);
+	addEventListener('close', () => { inspectionCache.delete(document); chromeAnchorEl = null; reseatChrome(); }, true);
+	addEventListener('toggle', () => { inspectionCache.delete(document); reseatChrome(); }, true);
+
+	// A narrow product configuration surface: it holds no user data and cannot
+	// read comments or clear them, so it is safe under @grant none. The full
+	// page-facing object below stays harness-only.
+	try {
+		Object.defineProperty(window, 'rapidFeedback', {
+			value: Object.freeze({ setProjectRoot }), configurable: false, writable: false
+		});
+	} catch { try { window.rapidFeedback = { setProjectRoot }; } catch {} }
 
 	// The page-facing global is a harness affordance, not a product API. Under
 	// @grant none a page script would otherwise read every comment and call
@@ -3677,7 +4126,7 @@
 			markdown() { return toMarkdown(annotations); },
 			json() { return toFeedbackJSON(annotations); },
 			get annotations() { return annotations; },
-			clear() { markDeleted(annotations); annotations = []; save(); if (panelRoot) renderPanel(); },
+			clear() { persist(() => { markDeleted(annotations); annotations = []; }); },
 			openPanel() { openPanel(); },
 			setProjectRoot,
 		};
@@ -3695,7 +4144,10 @@
 		try {
 			if (!localStorage.getItem('rf_first_run_hint_v1')) {
 				localStorage.setItem('rf_first_run_hint_v1', '1');
-				showToast('Leave feedback: hold ' + CHORD_HINT + ' and click, or focus an element and press Alt+Shift+E');
+				const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+				showToast(coarse
+					? 'Leave feedback: long-press an element, or focus one and press Alt+Shift+E. Double-tap opens the panel.'
+					: 'Leave feedback: hold ' + CHORD_HINT + ' and click, or focus an element and press Alt+Shift+E. Double-tap opens the panel.');
 			}
 		} catch {}
 	}
