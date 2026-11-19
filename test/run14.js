@@ -160,7 +160,8 @@ module.exports = () => withPage(async (page) => {
 		};
 	})()`);
 	r.check('short-viewport popover keeps Submit on screen', state.actionsBottom <= state.viewport + 1, JSON.stringify(state));
-	r.check('marker badges are contiguous from 1', state.badges.join(',') === '1,2', JSON.stringify(state.badges));
+	// The header identifies the primary as "1"; on-page badges continue 2..N.
+	r.check('marker badges are contiguous from the primary', state.badges.join(',') === '2,3', JSON.stringify(state.badges));
 	r.check('tabs expose ARIA tab semantics', state.tabRole === 'tablist' && state.selected === 'true,false' && /^1 /.test(state.hint), JSON.stringify(state));
 	await page.setViewport({ width: 1200, height: 800 });
 

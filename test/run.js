@@ -32,6 +32,10 @@ module.exports = async function run() {
   check('title shows +2', /\+2$/.test(state.title || ''), state.title);
   check('zoom row hidden for group', state.zoomHidden === 'none', state.zoomHidden);
   check('markers persist while popover open (2 non-primary)', state.markers === 2, 'got ' + state.markers);
+  const badges = await page.evaluate(`(() => [...document.body.children, ...document.documentElement.children]
+    .flatMap(h => [...(h.shadowRoot?.querySelectorAll('.rf-marker-badge') || [])].map(b => b.textContent)))()`);
+  check('on-page badges continue from the primary (2,3)',
+    JSON.stringify(badges) === '["2","3"]', JSON.stringify(badges));
 
   // --- Live style edit previews across the whole selection ---
   await page.evaluate(`(() => {

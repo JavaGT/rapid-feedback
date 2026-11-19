@@ -2085,7 +2085,10 @@ ${COMMON_CSS}
 			renderHeader();
 			// Badge the non-primary members 1..N; the primary is called out as 1 in
 			// the selection header, so the visible numbering never starts at 2.
-			setSelectionMarkers(members.slice(1), 0);
+			// The popover's header calls members[0] "1", so non-primary badges
+			// must continue at 2 — otherwise the same ordinal names two different
+			// elements across the chord and popover states.
+			setSelectionMarkers(members.slice(1), 1);
 			setStyleTargets(members);
 			for (const k in adjustedStyles) applyStyle(k, adjustedStyles[k], adjustedStyles);
 			renderMembers();
@@ -3405,11 +3408,9 @@ ${COMMON_CSS}
 	function exitPick(result) {
 		if (!pickMode) return;
 		const { kind, sourceEl, sourceData, draft } = pickMode;
-		pickMode = null;
-		setFeedbackCursor('');
-		syncChromeClickThrough();
-		hidePickBanner();
-		hideOutline();
+		// One teardown authority: going through dismissTransient keeps chord
+		// cleanup and cursor/click-through state in sync with every other exit.
+		dismissTransient('pick-exit');
 		if (kind === 'member') {
 			if (result) draft.members = [...(draft.members || [sourceEl]), result];
 			showPopover(sourceEl, sourceData, draft);
@@ -3439,6 +3440,10 @@ ${COMMON_CSS}
 		adoptStyles(root);
 		const b = document.createElement('div');
 		b.className = 'rf-banner';
+		// The banner is created on entry, so a live region announces the new
+		// mode (and how to leave it) without moving focus out of the page.
+		b.setAttribute('role', 'status');
+		b.setAttribute('aria-live', 'polite');
 		const strong = document.createElement('b');
 		strong.textContent = spec.banner;
 		const hint = document.createElement('span');
