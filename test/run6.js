@@ -256,16 +256,18 @@ module.exports = async function run6() {
 		}
 
 		// --- Slow release: chord held >CHORD_GESTURE_MS after the click must survive ---
-		const cdp = await page.createCDPSession();
+		// Use the page-level pointer API so the same check runs under Firefox's
+		// BiDi connection; keyboard modifiers are carried by puppeteer itself.
 		await page.keyboard.down('Alt');
 		await page.keyboard.down('Meta');
 		const slowBox = await page.evaluate(`(() => {
 			const r = document.querySelector('#c2').getBoundingClientRect();
 			return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
 		})()`);
-		await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: slowBox.x, y: slowBox.y, modifiers: 5, button: 'left', clickCount: 1 });
+		await page.mouse.move(slowBox.x, slowBox.y);
+		await page.mouse.down();
 		await new Promise(r => setTimeout(r, 1800));
-		await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: slowBox.x, y: slowBox.y, modifiers: 5, button: 'left', clickCount: 1 });
+		await page.mouse.up();
 		await new Promise(r => setTimeout(r, 100));
 		await page.keyboard.up('Meta');
 		await page.keyboard.up('Alt');

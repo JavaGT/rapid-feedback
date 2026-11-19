@@ -87,6 +87,27 @@ module.exports = () => withPage(async (page) => {
 	await close();
 	await page.evaluate(() => { history.replaceState({}, '', location.pathname); });
 
+	// --- A dirty draft arms the documented beforeunload prompt ---
+	await annot('#c2');
+	await page.evaluate(`(() => { ${POP}.querySelector('.rf-popover-ta').value = 'unsaved draft'; })()`);
+	const dirtyClose = await page.evaluate(() => {
+		const e = new Event('beforeunload', { cancelable: true });
+		window.dispatchEvent(e);
+		return e.defaultPrevented;
+	});
+	r.check('a dirty draft cancels beforeunload', dirtyClose === true, String(dirtyClose));
+	await close();
+	// An earlier failed-write case deliberately keeps its quick note; clear it
+	// so this assertion measures only the popover draft.
+	await page.evaluate(`(() => { const panel = ${PANEL};
+		const ta = panel?.querySelector('.rf-panel-footer textarea'); if (ta) ta.value = ''; })()`);
+	const cleanClose = await page.evaluate(() => {
+		const e = new Event('beforeunload', { cancelable: true });
+		window.dispatchEvent(e);
+		return e.defaultPrevented;
+	});
+	r.check('a pristine session does not prompt on tab close', cleanClose === false, String(cleanClose));
+
 	// --- Long-press resolves + annotates without activating the page control ---
 	await page.evaluate(() => {
 		window.__hostClicks = 0;
