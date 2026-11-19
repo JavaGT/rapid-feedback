@@ -1056,10 +1056,23 @@
 		return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
 	}
 
-	function makeAnnotation(data) {
+	// Legacy (pre-envelope) rows have no id. Derive one deterministically from
+	// the fields that identify the target so a reconcile cannot mint a new id
+	// and duplicate the record on every save.
+	function legacyStoredId(row) {
+		const basis = JSON.stringify([row.selector, row.tag, row.url, row.text]);
+		let h = 2166136261;
+		for (let i = 0; i < basis.length; i++) { h ^= basis.charCodeAt(i); h = Math.imul(h, 16777619); }
+		return 'legacy-' + (h >>> 0).toString(36);
+	}
+
+	function makeAnnotation(data, stored = false) {
+		const storedId = stored && typeof data.id === 'string' && data.id ? data.id : legacyStoredId(data);
 		return {
-			id: data.id || annotationId(),
-			ts: data.ts || Date.now(),
+			// Stored rows keep their identity; only a fresh capture mints a
+			// random id/ts. An id-less legacy row gets a deterministic one.
+			id: stored ? storedId : (data.id || annotationId()),
+			ts: stored ? (Number.isFinite(data.ts) ? data.ts : 0) : (data.ts || Date.now()),
 			selector: data.selector || '(general)',
 			framePath: Array.isArray(data.framePath) ? data.framePath : null,
 			tag: data.tag || 'general',
@@ -1284,7 +1297,7 @@
 	// One corrupt row shouldn't take the whole history down with it: keep the
 	// well-formed objects and let makeAnnotation fill in any missing fields.
 	function hydrateAnnotations(rows) {
-		if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(makeAnnotation);
+		if (Array.isArray(rows)) annotations = rows.filter(a => a && typeof a === 'object').map(a => makeAnnotation(a, true));
 	}
 
 	const DELETED_MAX = 200;
@@ -1354,7 +1367,7 @@
 		const byId = new Map();
 		for (const a of annotations) byId.set(a.id, a);
 		for (const row of stored.rows) {
-			const a = makeAnnotation(row);
+			const a = makeAnnotation(row, true);
 			const current = byId.get(a.id);
 			if (!current || (a.ts || 0) > (current.ts || 0)) byId.set(a.id, a);
 		}

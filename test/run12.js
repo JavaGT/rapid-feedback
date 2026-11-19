@@ -273,6 +273,20 @@ module.exports = async function run12() {
 		const survivors = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.map(a => a.id));
 		check('Cut All keeps records merged during the copy',
 			JSON.stringify(survivors) === '["late"]', JSON.stringify(survivors));
+		// --- Stored rows are validated at the boundary; reconcile is idempotent ---
+		await page.reload();
+		await page.evaluate((k) => localStorage.removeItem(k), KEY);
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
+		await page.evaluate(SCRIPT);
+		const idless = { selector: '#c1', tag: 'div', text: 'no id' };
+		await seed({ annotations: [row('stable', 100, 'note'), idless], deleted: [] });
+		const before = await anns();
+		await seed({ annotations: [row('stable', 100, 'note'), idless], deleted: [] });
+		const after = await anns();
+		check('id-less legacy rows are kept with a deterministic id',
+			before.length === 2 && before[0].id === 'stable' && /^legacy-/.test(before[1].id), JSON.stringify(before));
+		check('reconcile does not re-mint ids or timestamps',
+			JSON.stringify(after) === JSON.stringify(before), JSON.stringify(after));
 		// --- API gating: without the harness flag, no page-facing global is installed ---
 		await page.reload();
 		await page.evaluate(SCRIPT); // deliberately no __RF_TEST_MODE__
