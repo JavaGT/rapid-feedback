@@ -42,6 +42,10 @@ module.exports = async function run12() {
 			text: 'First card', url: 'https://x.test/p', comment, ...extra });
 		const anns = () => page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations
 			.map(a => ({ id: a.id, ts: a.ts, comment: a.comment, url: a.url })));
+		// The harness never runs inside Tampermonkey, so at least pin the
+		// metadata contract the installed userscript relies on.
+		check('userscript declares a wide match and no privileged grants',
+			/@match\s+\*:\/\/\*\/\*/.test(SCRIPT) && /@grant\s+none/.test(SCRIPT), '');
 		// --- Storage: a corrupt blob is preserved, never silently overwritten ---
 		await page.evaluate((k) => localStorage.setItem(k, '{not json'), KEY);
 		await page.reload();
