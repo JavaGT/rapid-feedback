@@ -253,6 +253,26 @@ module.exports = async function run12() {
 		const afterTitle = await cardTitle();
 		check('panel card refreshes when cross-tab text changes',
 			beforeTitle === 'Old text' && afterTitle === 'New text', beforeTitle + ' -> ' + afterTitle);
+		// --- Cut All must not wipe a record merged in during the async copy ---
+		await page.reload();
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
+		await page.evaluate(SCRIPT);
+		await installClipboard();
+		await seed({ annotations: [row('cut1', 100, 'to cut')], deleted: [] });
+		await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.openPanel());
+		await page.evaluate(() => {
+			Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+				writeText(t) { window.__copy.texts.push(t); return new Promise(res => { window.__deferredCut = res; }); }
+			}});
+		});
+		await clickCutAll(); await clickCutAll();
+		await waitFor(page, '!!window.__deferredCut', { description: 'deferred Cut All copy' });
+		await seed({ annotations: [row('cut1', 100, 'to cut'), row('late', 200, 'arrived')], deleted: [] });
+		await page.evaluate(() => { window.__deferredCut(); });
+		await waitFor(page, `window.__SCOPE_FEEDBACK_API__.annotations.length === 1`, { description: 'Cut All by id' });
+		const survivors = await page.evaluate(() => window.__SCOPE_FEEDBACK_API__.annotations.map(a => a.id));
+		check('Cut All keeps records merged during the copy',
+			JSON.stringify(survivors) === '["late"]', JSON.stringify(survivors));
 		// --- API gating: without the harness flag, no page-facing global is installed ---
 		await page.reload();
 		await page.evaluate(SCRIPT); // deliberately no __RF_TEST_MODE__

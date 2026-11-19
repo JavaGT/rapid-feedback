@@ -41,7 +41,7 @@ Userscript for annotating web pages. Hold `Alt+⌘` (Mac) or `Alt+Ctrl` (Windows
 | `Alt+Shift+R` | Bring a dragged-offscreen popover back to its target without losing the draft |
 | ✎ with popover open | Same as `Alt+Shift+R` — return the popover to its target |
 | `⌘/Ctrl + Enter` | Submit from the comment box, or save an in-place panel comment edit |
-| Panel `?` | Show the gesture cheatsheet after the first-run hint expires |
+| Panel `?` | Show a one-line gesture reminder toast (the full list is in the Interactions table above) |
 | Panel sort / filter | Reorder cards newest-first or narrow them to one category |
 
 Annotations carry stable ids and timestamps. Two tabs on one origin merge their records on write and on `storage` events (deleted rows stay deleted), so one tab can no longer silently erase another's work. A failed clipboard write never destroys the source, and a failed `localStorage` write never announces "Saved".
@@ -73,16 +73,14 @@ Legend: → = destination, Group: = other selected elements, ⚠ = selector matc
 ## 1. [GENERAL] Files
 > This is the displayed text on the element
 The user's comment goes here — clearly distinguished from the element text above.
-
 Source: src/lib/FilesLink.svelte:42 (nearest ancestor with source)
-Component: FilesLink.svelte:42 ← projects/+page.svelte:15
+Component: projects/+page.svelte:15
 Open: vscode://file/repo/src/lib/FilesLink.svelte:42:8
 A11y: role=link name="Files"
 Looks: display=inline-flex; color=rgb(…); padding=8px 12px; border-radius=6px
 Where: div.sections > a.section-link[href="/app/projects/.../files"] > div.link-main
 Frame: section.shell > dialog[open]
 Rect: 434×21
-
 → Destination: div.other-section > a.other-link
   Text: “Grades”
   Source: src/lib/DetailsPanel.svelte:24
@@ -95,7 +93,6 @@ Group: 3 elements (this + 2)
   • a#second-link "Second"
     Where: div.sections > a#second-link
     Source: src/lib/FilesLink.svelte:48
-
 Tweak (all 3 elements):
   padding: 12px;
   font-size: 14px;
@@ -116,6 +113,6 @@ npm --prefix test install
 npm --prefix test test
 ```
 
-It defaults to `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Set `RAPID_FEEDBACK_CHROME` to use another Chrome-compatible executable.
+It uses the installed Chrome by default. Override the browser with `RAPID_FEEDBACK_BROWSER` (`chrome` or `firefox`) or point `RAPID_FEEDBACK_EXECUTABLE` at a specific binary; `RAPID_FEEDBACK_CHROME` still works as a last-resort Chrome alias.
 
 Run the click-through targeting regression in Firefox with `RAPID_FEEDBACK_BROWSER=firefox node test/run9.js`. It defaults to the macOS Firefox application; set `RAPID_FEEDBACK_EXECUTABLE` to override the browser path.

@@ -2985,10 +2985,17 @@ ${COMMON_CSS}
 			delete cutAllBtn.dataset.armed;
 			cutAllBtn.textContent = 'Cut All';
 			cutAllBtn.classList.remove('rf-btn-armed');
-			// Wipe only after the export is confirmed on the clipboard.
-			const ok = await copyText(toMarkdown(annotations));
+			// Wipe only after the export is confirmed on the clipboard, and only
+			// what was actually exported: a record merged in during the async
+			// clipboard write must never be destroyed without being copied.
+			const cut = annotations.slice();
+			const cutIds = new Set(cut.map(a => a.id));
+			const ok = await copyText(toMarkdown(cut));
 			if (!ok) { showToast('Copy failed — nothing cut'); return; }
-			persist(() => { markDeleted(annotations); annotations = []; }, 'Cut');
+			persist(() => {
+				markDeleted(cut);
+				annotations = annotations.filter(a => !cutIds.has(a.id));
+			}, 'Cut');
 		});
 		cutAllBtn.style.minWidth = '110px'; // reserve the armed label's width
 		toolbar.appendChild(cutAllBtn);
