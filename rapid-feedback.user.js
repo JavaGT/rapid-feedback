@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.23
+// @version      5.24
+// @note         v5.24: the feedback editor owns interactions over its own surface (a click in it cannot click a host dialog away), and chord targets inside a top-layer modal no longer drift to the page behind it
 // @note         v5.23: outline and popover stay viewport-anchored inside top-layer dialogs — our chrome is its own top-layer popover instead of being hosted inside the page's dialog
 // @note         v5.22: one persistence/commit authority with honest success toasts, snapshot-based draft guards, token-checked chrome ownership, short-viewport popover, accessible controls and shared export view
 // @note         v5.21: hostile-review hardening — durable multi-tab storage, confirmed-copy cuts, honest save failures, resolvable selectors, redacted provenance, dirty-draft guards, hostile-page resilience and agent-readable exports
@@ -155,6 +156,36 @@
 	// Hosts this instance actually created. A page-injected copy of the marker
 	// attribute must not make page regions unannotatable or flip click-through.
 	const chromeHosts = new Set();
+	// Our chrome lives in its own top-layer popover on <html>, so a press in the
+	// feedback editor composes to window where a page dialog's outside-press
+	// handler reads it as a click-away and dismisses the modal. The input window
+	// owns every interaction over its own surface: present our events as coming
+	// from inside the page's open top-layer dialog, which is how those handlers
+	// decide "outside". Unlike stopping propagation, this leaves focus, typing
+	// and our own in-shadow handlers completely intact.
+	const HIJACK_TYPES = ['pointerdown', 'pointerup', 'click'];
+	function pageTopLayer() {
+		const layers = [...document.querySelectorAll('dialog[open], [popover]:popover-open')]
+			.filter(el => !isOwnChrome(el));
+		return layers[layers.length - 1] || null;
+	}
+	for (const type of HIJACK_TYPES) {
+		addEventListener(type, (e) => {
+			if (!e.composed || typeof e.composedPath !== 'function') return;
+			let path;
+			try { path = e.composedPath(); } catch { return; }
+			if (!path.some(n => n && n.nodeType === 1 && isOwnChrome(n))) return;
+			const layer = pageTopLayer();
+			if (!layer || path.includes(layer)) return;
+			const original = e.composedPath.bind(e);
+			try {
+				Object.defineProperty(e, 'composedPath', {
+					configurable: true,
+					value: () => [layer, ...original()],
+				});
+			} catch { /* a locked-down event can't be annotated; leave it alone */ }
+		}, { capture: true });
+	}
 	// One declared ladder instead of magic numbers repeated at six call sites:
 	// overlays (toast/banner) float above everything, the outline above markers,
 	// markers above the interactive surfaces.
@@ -3481,6 +3512,7 @@ ${COMMON_CSS}
 		let target = hint || path.find(n => n && n.nodeType === 1) || e.target;
 		if (!target || target.nodeType !== 1 || isRfChrome(target)) return null;
 		const ownerDoc = target.ownerDocument || document;
+		const layerRoot = topLayerOwner(target);
 		const shouldPierce = !o.onlyIfTargetIsLayer || isPierceLayer(target, ownerDoc);
 		if (shouldPierce && typeof ownerDoc.elementsFromPoint === 'function'
 			&& Number.isFinite(e.clientX) && Number.isFinite(e.clientY)) {
@@ -3494,6 +3526,10 @@ ${COMMON_CSS}
 				}
 				if (isRfChrome(el)) continue;
 				if (el === ownerDoc.body || el === ownerDoc.documentElement) continue;
+				// Keep a top-layer target inside its own surface: a hit-test that
+				// misses the dialog/popover must not pull the annotation out to the
+				// page behind it.
+				if (layerRoot && !layerRoot.contains(el)) continue;
 				if (o.preserveComposedPath) {
 					let root = target?.getRootNode?.();
 					while (root?.host && root.host !== el) root = root.host.getRootNode();
@@ -3623,6 +3659,18 @@ ${COMMON_CSS}
 
 	function resolveChordTarget(e, hint) {
 		return resolvePiercedTarget(e, hint, { resetPierced: true, preserveComposedPath: true });
+	}
+
+	// A target inside a top-layer surface — a native modal dialog or an open
+	// popover — is authoritative. Some engines omit top-layer content from
+	// elementsFromPoint, so the piercing scan would otherwise retarget a child
+	// of a modal to its page parent (or to something behind the modal). When we
+	// are in one, only accept a hit-test replacement from the same surface.
+	function topLayerOwner(el) {
+		for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+			try { if (node.matches('dialog[open], [popover]:popover-open')) return node; } catch {}
+		}
+		return null;
 	}
 
 	function capturableEl(el) {
