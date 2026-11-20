@@ -56,7 +56,8 @@ module.exports = async function run() {
 		check('Alt+Shift+E opens the editor on focus', keyboardState.comment, JSON.stringify(keyboardState));
 		check('popover is a labelled dialog', keyboardState.role === 'dialog' && !!keyboardState.label, JSON.stringify(keyboardState));
 
-		// Interactive chrome follows the anchor into a top-layer dialog and back.
+		// Interactive chrome stays in its own top layer over a page dialog; moving
+		// it into the dialog broke viewport-anchored positioning (see run11).
 		await page.evaluate(() => {
 			if (window.__dialogForRf) return;
 			const d = document.createElement('dialog');
@@ -76,21 +77,22 @@ module.exports = async function run() {
 		await page.keyboard.up('Shift');
 		await page.keyboard.up('Alt');
 		await pause(150);
-		const parentInModal = await page.evaluate(() => {
+		const inModal = await page.evaluate(() => {
 			const hosts = [...document.querySelectorAll('[data-rf-chrome]')];
 			const p = hosts.find(h => h.shadowRoot?.querySelector('.rf-popover'));
-			return p?.parentElement?.tagName || null;
+			return { parent: p?.parentElement?.tagName || null, raised: !!p?.matches(':popover-open') };
 		});
-		check('popover follows target into the top layer', parentInModal === 'DIALOG', String(parentInModal));
+		check('popover stays in its own top layer over the dialog', inModal.parent === 'HTML' && inModal.raised, JSON.stringify(inModal));
+		await page.keyboard.press('Escape');
 		await waitForPopoverGone(page);
 		await page.evaluate(() => window.__dialogForRf.close());
 		await pause(100);
-		const parentAfter = await page.evaluate(() => {
+		const after = await page.evaluate(() => {
 			const hosts = [...document.querySelectorAll('[data-rf-chrome]')];
 			const fab = hosts.find(h => h.shadowRoot?.querySelector('.rf-fab'));
-			return fab?.parentElement?.tagName || null;
+			return { parent: fab?.parentElement?.tagName || null, raised: !!fab?.matches(':popover-open') };
 		});
-		check('chrome returns to <html> after dialog closes', parentAfter === 'HTML', String(parentAfter));
+		check('chrome stays in its own top layer after dialog closes', after.parent === 'HTML' && after.raised, JSON.stringify(after));
 
 		// Last: a page-set flag plus a decoy host cannot suppress installation,
 		// because ownership is proven by the per-boot token stamped on real hosts.

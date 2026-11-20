@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.22
+// @version      5.23
+// @note         v5.23: outline and popover stay viewport-anchored inside top-layer dialogs — our chrome is its own top-layer popover instead of being hosted inside the page's dialog
 // @note         v5.22: one persistence/commit authority with honest success toasts, snapshot-based draft guards, token-checked chrome ownership, short-viewport popover, accessible controls and shared export view
 // @note         v5.21: hostile-review hardening — durable multi-tab storage, confirmed-copy cuts, honest save failures, resolvable selectors, redacted provenance, dirty-draft guards, hostile-page resilience and agent-readable exports
-// @note         v5.20: outline and selection markers follow top-layer dialogs/popups, so the blue ring is no longer painted behind the element being annotated
+// @note         v5.20: outline and selection markers follow top-layer dialogs/popups so the blue ring is not painted behind the target (superseded in v5.23 — see the note above)
 // @note         v5.19: chord picking includes click-through text and guidance, so transcript gutter hints no longer select the entire editor
 // @description  Hold Alt+⌘/Ctrl+click any element to annotate it. Multi-select, relocation, element zoom, Shadow DOM isolation. Exports as markdown/JSON.
 // @note         v5.16: same-origin iframe picking, frame-aware coordinates and stored frame paths; cross-origin frames remain isolated behind their own userscript instance
@@ -1451,7 +1452,10 @@
 	// --- Shadow DOM helpers ---
 	function createShadowRoot({ transient = false } = {}) {
 		const host = document.createElement('div');
-		host.style.cssText = `all:initial;position:fixed;z-index:${Z.outline};pointer-events:none`;
+		// Chrome lives in its OWN top-layer popover so it paints above page dialogs
+		// without ever becoming a fixed-positioned descendant of one (see raiseChrome).
+		host.setAttribute('popover', 'manual');
+		host.style.cssText = `all:initial;position:fixed;top:0;left:0;z-index:${Z.outline};pointer-events:none`;
 		// Every piece of our own chrome carries this marker, so isRfChrome can reject
 		// it by inspection rather than by keeping a list of hosts in sync.
 		host.setAttribute(RF_CHROME_ATTR, '');
@@ -1466,35 +1470,26 @@
 		// during hydration, and our chrome should survive that.
 		hardenHost(host);
 		document.documentElement.appendChild(host);
-		// A top layer beats any z-index. Seat every new host where the current
-		// chrome anchor lives so pick guidance and toasts stay visible in a dialog.
-		hostChromeAt(host, chromeAnchorEl);
+		raiseChrome(host);
 		return { host, root };
 	}
 
-	// Dialogs and popups paint in the browser's top layer, above every z-index —
-	// a fixed host on <html> can never cover them. When the element being
-	// annotated lives in one, host the overlay chrome inside that same element so
-	// the outline and markers share its stacking context and stay visible.
-	function topLayerHostFor(el) {
-		try {
-			for (let cur = el; cur && cur.nodeType === 1; cur = parentOf(cur)) {
-				if (cur.matches(':modal')) return cur;
-				if (cur.hasAttribute('popover') && cur.matches(':popover-open')) return cur;
-			}
-		} catch {}
-		return null;
+	// Page dialogs and popups live in the browser's top layer, above any z-index.
+	// Hosting our chrome *inside* one (the v5.20 approach) wins paint order but
+	// loses positioning: that element is often a containing block for fixed
+	// children (transform/translate/filter, Safari's dialog handling), so every
+	// viewport-relative outline, marker and popover coordinate is offset by its
+	// origin. A popover of our own is above page chrome yet has no transformed
+	// ancestor, so fixed descendants keep using viewport coordinates as-is.
+	function raiseChrome(host) {
+		if (!host?.isConnected) return;
+		try { if (!host.matches(':popover-open')) host.showPopover(); }
+		catch { /* older engine: a plain fixed host on <html> is the fallback */ }
 	}
-
-	// A top layer beats any z-index, so interactive chrome must move into the
-	// owning dialog while a draft is open there, then return to <html>.
-	let chromeAnchorEl = null;
-	function hostChromeAt(host, el) {
-		const parent = topLayerHostFor(el) || document.documentElement;
-		if (host.parentElement !== parent) parent.appendChild(host);
-	}
+	// A page top-layer element shown after our hosts would cover them; re-raise
+	// on dialog close/toggle and whenever we open a new surface.
 	function reseatChrome() {
-		for (const host of chromeHosts) if (host.isConnected) hostChromeAt(host, chromeAnchorEl);
+		for (const host of chromeHosts) if (host.isConnected) raiseChrome(host);
 	}
 
 	// Hosts live in the page's DOM, so a hostile stylesheet can hide them. Pin
@@ -1519,7 +1514,10 @@
 		setTimeout(() => {
 			chromeHealScheduled = false;
 			for (const host of chromeHosts) {
-				if (!host.isConnected && !host.hasAttribute('data-rf-transient')) document.documentElement.appendChild(host);
+				if (!host.isConnected && !host.hasAttribute('data-rf-transient')) {
+					document.documentElement.appendChild(host);
+					raiseChrome(host);
+				}
 			}
 		}, 50);
 	}
@@ -1946,7 +1944,6 @@ ${COMMON_CSS}
 	function showPopover(el, data, initial) {
 		const prior = document.activeElement;
 		restoreFocusEl = prior && prior.nodeType === 1 && prior !== document.body && !isRfChrome(prior) ? prior : null;
-		chromeAnchorEl = el;
 		hidePopover();
 		// Pin the record being edited by identity so a panel delete that shifts
 		// array indices mid-edit cannot redirect Submit onto another annotation.
@@ -1960,7 +1957,6 @@ ${COMMON_CSS}
 		// page height and the popover renders off-screen on all but short pages.
 		host.style.cssText = `all:initial;position:fixed;top:0;left:0;z-index:${Z.surface};pointer-events:none`;
 		hardenHost(host);
-		hostChromeAt(host, el);
 		reseatChrome();
 		root.appendChild(shadowStyle());
 		const ps = document.createElement('style');
@@ -3313,7 +3309,7 @@ ${COMMON_CSS}
 	let panelReturnFocus = null;
 	function openPanel() {
 		ensurePanelShell();
-		hostChromeAt(panelEl, chromeAnchorEl);
+		raiseChrome(panelEl);
 		panelEl.style.setProperty('display', 'block', 'important');
 		renderPanelList();
 		syncFabPresentation();
@@ -3338,18 +3334,8 @@ ${COMMON_CSS}
 	// Everything stays under the standard chrome click-through rules.
 	let overlayChrome = null;
 
-	function placeOverlayChrome(el) {
-		const host = overlayChrome?.host;
-		if (!host) return;
-		if (el) chromeAnchorEl = el;
-		hostChromeAt(host, el);
-	}
-
-	function ensureOverlayChrome(el) {
-		if (overlayChrome?.host?.isConnected) {
-			if (el) placeOverlayChrome(el);
-			return overlayChrome;
-		}
+	function ensureOverlayChrome() {
+		if (overlayChrome?.host?.isConnected) return overlayChrome;
 		const { host, root } = createShadowRoot();
 		const s = document.createElement('style');
 		s.textContent = `
@@ -3362,7 +3348,6 @@ ${COMMON_CSS}
 		root.appendChild(s);
 		adoptStyles(root);
 		overlayChrome = { host, root };
-		if (el) placeOverlayChrome(el);
 		return overlayChrome;
 	}
 
@@ -3374,7 +3359,7 @@ ${COMMON_CSS}
 
 	function showOutline(el, variant) {
 		const v = variant || 'target';
-		const { root } = ensureOverlayChrome(el);
+		const { root } = ensureOverlayChrome();
 		if (!outlineEl || !outlineEl.isConnected) {
 			outlineEl = document.createElement('div');
 			outlineEl.className = 'rf-outline';
@@ -3731,7 +3716,7 @@ ${COMMON_CSS}
 	// labelled 1 in the popover header, so the on-page list starts at 1 too).
 	function setSelectionMarkers(els, startIndex) {
 		clearSelectionMarkers();
-		const { root } = ensureOverlayChrome(els[0]);
+		const { root } = ensureOverlayChrome();
 		const base = startIndex || 0;
 		for (let i = 0; i < els.length; i++) {
 			const el = els[i];
@@ -4164,8 +4149,9 @@ ${COMMON_CSS}
 	addEventListener('beforeunload', (e) => {
 		if (draftDirty() || panelQuickDirty()) { e.preventDefault(); e.returnValue = ''; }
 	});
-	// When a modal/popup closes, its top layer disappears; move our hosts back.
-	addEventListener('close', () => { inspectionCache.delete(document); chromeAnchorEl = null; reseatChrome(); }, true);
+	// When a page top-layer element closes or toggles, re-raise our hosts so they
+	// stay above whatever is left in the top layer.
+	addEventListener('close', () => { inspectionCache.delete(document); reseatChrome(); }, true);
 	addEventListener('toggle', () => { inspectionCache.delete(document); reseatChrome(); }, true);
 
 	// A narrow product configuration surface: it holds no user data and cannot
