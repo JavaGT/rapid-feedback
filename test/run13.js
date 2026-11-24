@@ -16,11 +16,12 @@ module.exports = async function run() {
 			return texts;
 		});
 
-		// A first-time user gets one hint naming both input paths; an empty store
-		// must not be reported as corrupt.
-		const hints = await statusTexts();
-		check('first-run hint names the keyboard path', hints.some(t => /Alt\+Shift\+E/.test(t)), JSON.stringify(hints));
-		check('empty storage is not reported as corrupt', !hints.some(t => /unreadable/i.test(t)), JSON.stringify(hints));
+		// Loading a page stays silent: v5.28 removed the first-run toast, so a
+		// fresh session must not raise any status surface by itself. An empty
+		// store must still not be reported as corrupt.
+		const statuses = await statusTexts();
+		check('a fresh load raises no status surface', statuses.length === 0, JSON.stringify(statuses));
+		check('empty storage is not reported as corrupt', !statuses.some(t => /unreadable/i.test(t)), JSON.stringify(statuses));
 
 		// Structural host styles are pinned against page CSS.
 		const priorities = await page.evaluate(() => {

@@ -1,7 +1,11 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.24
+// @version      5.28
+// @note         v5.28: no first-run popup — loading a page shows nothing until the chord is held or the panel is opened; the panel's ? button still carries the gesture reminder
+// @note         v5.27: pinch-zoom safe outlines, markers and popover — a fixed-at-origin probe measures Safari's visual-viewport gap so BCR-derived overlay coordinates land on their targets instead of drifting
+// @note         v5.26: the chord outline re-raises itself when its target is inside a page popover/menu, so the ring stays visible above SDK menus even where the popover's toggle event never reaches the tool (Safari)
+// @note         v5.25: chrome re-raises itself when a page top-layer surface opens, so the chord outline stays visible on modal children instead of painting behind the modal
 // @note         v5.24: the feedback editor owns interactions over its own surface (a click in it cannot click a host dialog away), and chord targets inside a top-layer modal no longer drift to the page behind it
 // @note         v5.23: outline and popover stay viewport-anchored inside top-layer dialogs — our chrome is its own top-layer popover instead of being hosted inside the page's dialog
 // @note         v5.22: one persistence/commit authority with honest success toasts, snapshot-based draft guards, token-checked chrome ownership, short-viewport popover, accessible controls and shared export view
@@ -575,6 +579,41 @@
 			doc = frame.ownerDocument;
 		}
 		return { x: left, y: top, top, left, right: left + width, bottom: top + height, width, height };
+	}
+
+	// Safari's pinch zoom leaves getBoundingClientRect() in visual-viewport
+	// coordinates while `position: fixed` still uses layout-viewport coordinates
+	// (WebKit 170981 / 257375): a fixed overlay placed at BCR.left lands short by
+	// visualViewport.offsetLeft. Chrome/Firefox keep both in the same system. A
+	// fixed probe at the origin reads (0,0) there and (-offsetLeft, -offsetTop)
+	// in Safari, so its reading is the exact correction — no UA sniffing, and no
+	// reliance on visualViewport's own (sometimes imprecise) values.
+	let fixedProbeEl = null;
+	function fixedViewportOffset() {
+		if (!fixedProbeEl?.isConnected || fixedProbeEl.ownerDocument !== document) {
+			fixedProbeEl = document.createElement('div');
+			fixedProbeEl.setAttribute(RF_CHROME_ATTR, '');
+			fixedProbeEl.setAttribute('data-rf-fixed-probe', '');
+			try { Object.defineProperty(fixedProbeEl, '__rfBootToken', { value: bootToken, configurable: false }); } catch {}
+			fixedProbeEl.style.cssText = 'all:initial;position:fixed;top:0;left:0;width:0;height:0;pointer-events:none;visibility:hidden';
+			document.documentElement.appendChild(fixedProbeEl);
+		}
+		const r = fixedProbeEl.getBoundingClientRect();
+		return { x: -r.left, y: -r.top };
+	}
+
+	// BCR-derived rect → coordinates our fixed-positioned chrome can use. Width
+	// and height stay as measured: Safari reports them in the same unscaled units
+	// fixed positioning uses, so only the origin needs translating.
+	function getFixedRect(el) {
+		const r = getViewportRect(el);
+		const off = fixedViewportOffset();
+		return {
+			x: r.x + off.x, y: r.y + off.y,
+			top: r.top + off.y, left: r.left + off.x,
+			right: r.right + off.x, bottom: r.bottom + off.y,
+			width: r.width, height: r.height
+		};
 	}
 
 	function topClientPoint(e) {
@@ -1512,15 +1551,28 @@
 	// viewport-relative outline, marker and popover coordinate is offset by its
 	// origin. A popover of our own is above page chrome yet has no transformed
 	// ancestor, so fixed descendants keep using viewport coordinates as-is.
-	function raiseChrome(host) {
+	function raiseChrome(host, { force = false } = {}) {
 		if (!host?.isConnected) return;
-		try { if (!host.matches(':popover-open')) host.showPopover(); }
-		catch { /* older engine: a plain fixed host on <html> is the fallback */ }
+		try {
+			// showPopover() on an already-showing popover is a no-op. A page modal
+			// opened after our host wins paint order, which buries our fixed outline
+			// behind it (the ring is positioned correctly but invisible). Hide+show
+			// is the only way back to the top of the top layer.
+			if (force && host.matches(':popover-open')) host.hidePopover();
+			if (!host.matches(':popover-open')) host.showPopover();
+		} catch { /* older engine: a plain fixed host on <html> is the fallback */ }
 	}
 	// A page top-layer element shown after our hosts would cover them; re-raise
-	// on dialog close/toggle and whenever we open a new surface.
+	// on dialog close/toggle and whenever we open a new surface. Re-showing a
+	// popover blurs whatever it held, so never force a surface that owns focus
+	// (the feedback editor while the user is typing).
 	function reseatChrome() {
-		for (const host of chromeHosts) if (host.isConnected) raiseChrome(host);
+		for (const host of chromeHosts) {
+			if (!host.isConnected) continue;
+			const holdsFocus = document.activeElement === host
+				|| (host.shadowRoot && host.shadowRoot.contains?.(document.activeElement));
+			raiseChrome(host, { force: !holdsFocus });
+		}
 	}
 
 	// Hosts live in the page's DOM, so a hostile stylesheet can hide them. Pin
@@ -1861,7 +1913,7 @@ ${COMMON_CSS}
 		savePopoverOffset();
 		if (popoverEl) {
 			const el = anchor?.getTarget?.();
-			const rect = el?.isConnected ? getViewportRect(el) : centeredFallbackRect();
+			const rect = el?.isConnected ? getFixedRect(el) : centeredFallbackRect();
 			placePopoverAt(popoverEl, rect, measurePopover());
 			anchor?.wake?.();
 		}
@@ -1900,7 +1952,7 @@ ${COMMON_CSS}
 			let changed = false;
 			const el = anchor.getTarget();
 			if (el && el.isConnected) {
-				const r = getViewportRect(el);
+				const r = getFixedRect(el);
 				const key = r.top + ':' + r.left + ':' + r.width + ':' + r.height + ':' + innerWidth + ':' + innerHeight;
 				if (key !== anchor.last) {
 					anchor.last = key;
@@ -1941,6 +1993,12 @@ ${COMMON_CSS}
 			anchor.scrollDocuments.add(doc);
 		}
 		addEventListener('resize', anchor.wake);
+		// Pinch zoom moves the visual viewport without necessarily firing a window
+		// resize/scroll, so wake on its own events too or the ring stays behind.
+		const vv = window.visualViewport;
+		anchor.vvWake = () => anchor.wake();
+		vv?.addEventListener('resize', anchor.vvWake);
+		vv?.addEventListener('scroll', anchor.vvWake);
 		// Attribute-only layout shifts (class/style/hidden) and scroll inside a
 		// page shadow root do not reach the window listener above.
 		anchor.wheelWake = () => anchor.wake();
@@ -1964,6 +2022,9 @@ ${COMMON_CSS}
 		anchor.attrObserver?.disconnect();
 		for (const doc of anchor.scrollDocuments) doc.removeEventListener('scroll', anchor.wake, { capture: true });
 		removeEventListener('resize', anchor.wake);
+		const vv = window.visualViewport;
+		vv?.removeEventListener('resize', anchor.vvWake);
+		vv?.removeEventListener('scroll', anchor.vvWake);
 		anchor = null;
 	}
 
@@ -2122,7 +2183,7 @@ ${COMMON_CSS}
 		zoomTag.textContent = compactLabel(zoomTarget);
 
 		function repositionTo(target) {
-			const r = getViewportRect(target);
+			const r = getFixedRect(target);
 			placePopoverAt(host, r, popover.offsetHeight || 480);
 		}
 
@@ -2697,7 +2758,7 @@ ${COMMON_CSS}
 		root.appendChild(popover);
 
 		host.style.position = 'fixed';
-		placePopoverAt(host, getViewportRect(el), popover.offsetHeight || 480);
+		placePopoverAt(host, getFixedRect(el), popover.offsetHeight || 480);
 
 		popoverEl = host;
 		popoverRoot = root;
@@ -2935,7 +2996,7 @@ ${COMMON_CSS}
 	// unreachable for the synthetic rect, as today.
 	function currentAutoPosition(host) {
 		const el = anchor?.getTarget?.() || null;
-		const r = el?.isConnected ? getViewportRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
+		const r = el?.isConnected ? getFixedRect(el) : { bottom: 80, left: Math.max(POPOVER_INSETS.pad, (innerWidth - POPOVER_W) / 2), top: 80 };
 		const pos = placePopover(r, POPOVER_W, measurePopover());
 		return { x: pos.left, y: pos.top };
 	}
@@ -3364,6 +3425,8 @@ ${COMMON_CSS}
 	// node in the page (see inspectionElementsAt), never a node per frame.
 	// Everything stays under the standard chrome click-through rules.
 	let overlayChrome = null;
+	// Last page top-layer surface the ring was raised above, for one chord gesture.
+	let lastOutlineLayer = null;
 
 	function ensureOverlayChrome() {
 		if (overlayChrome?.host?.isConnected) return overlayChrome;
@@ -3390,8 +3453,16 @@ ${COMMON_CSS}
 
 	function showOutline(el, variant) {
 		const v = variant || 'target';
-		const { root } = ensureOverlayChrome();
-		if (!outlineEl || !outlineEl.isConnected) {
+		const { host, root } = ensureOverlayChrome();
+		// A page popover/menu opened after our host wins top-layer paint order on
+		// engines that delay or omit its `toggle` event (Safari). Re-raise the
+		// ring when the chord target is inside such a surface so it paints above
+		// the popup instead of being hidden behind it.
+		const layer = topLayerOwner(el);
+		const fresh = !outlineEl || !outlineEl.isConnected;
+		if (layer && (fresh || layer !== lastOutlineLayer)) raiseChrome(host, { force: true });
+		lastOutlineLayer = layer;
+		if (fresh) {
 			outlineEl = document.createElement('div');
 			outlineEl.className = 'rf-outline';
 			outlineEl.setAttribute('data-rf-outline', '');
@@ -3407,7 +3478,8 @@ ${COMMON_CSS}
 	function positionOutline(el) {
 		if (!outlineEl) return;
 		// Sit 2px outside the element's own edge so the ring never covers content.
-		const r = getViewportRect(el);
+		// The ring is fixed-positioned, so use fixed coordinates (pinch-zoom safe).
+		const r = getFixedRect(el);
 		outlineEl.style.top = r.top - 2 + 'px';
 		outlineEl.style.left = r.left - 2 + 'px';
 		outlineEl.style.width = r.width + 4 + 'px';
@@ -3416,6 +3488,7 @@ ${COMMON_CSS}
 
 	function hideOutline() {
 		if (outlineEl) { outlineEl.remove(); outlineEl = null; }
+		lastOutlineLayer = null;
 	}
 
 	// --- Pick modes ---
@@ -3785,7 +3858,7 @@ ${COMMON_CSS}
 		let key = '';
 		for (const { el, node } of selMarkers) {
 			if (!el.isConnected) { node.style.display = 'none'; key += 'x|'; continue; }
-			const r = getViewportRect(el);
+			const r = getFixedRect(el);
 			node.style.display = 'block';
 			// Rect reads are unavoidable, but layout writes are not: a marker that
 			// has not moved keeps its cached transform, and transforms are compositor
@@ -4198,9 +4271,15 @@ ${COMMON_CSS}
 		if (draftDirty() || panelQuickDirty()) { e.preventDefault(); e.returnValue = ''; }
 	});
 	// When a page top-layer element closes or toggles, re-raise our hosts so they
-	// stay above whatever is left in the top layer.
-	addEventListener('close', () => { inspectionCache.delete(document); reseatChrome(); }, true);
-	addEventListener('toggle', () => { inspectionCache.delete(document); reseatChrome(); }, true);
+	// stay above whatever is left in the top layer. Our own hide+show fires these
+	// events too — ignoring them is what stops a re-raise from re-raising itself.
+	function onPageLayerChange(e) {
+		inspectionCache.delete(document);
+		if (isOwnChrome(e.target)) return;
+		reseatChrome();
+	}
+	addEventListener('close', onPageLayerChange, true);
+	addEventListener('toggle', onPageLayerChange, true);
 
 	// A narrow product configuration surface: it holds no user data and cannot
 	// read comments or clear them, so it is safe under @grant none. The full
@@ -4231,17 +4310,4 @@ ${COMMON_CSS}
 	loadPopoverOffset();
 	createFab();
 	if (hasAnnotations()) revealFab();
-	else {
-		// A first-time user sees no chrome at all; one hint names the gesture and
-		// the keyboard alternative, then never shows again on this origin.
-		try {
-			if (!localStorage.getItem('rf_first_run_hint_v1')) {
-				localStorage.setItem('rf_first_run_hint_v1', '1');
-				const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-				showToast(coarse
-					? 'Leave feedback: long-press an element, or focus one and press Alt+Shift+E. Double-tap opens the panel.'
-					: 'Leave feedback: hold ' + CHORD_HINT + ' and click, or focus an element and press Alt+Shift+E. Double-tap opens the panel.');
-			}
-		} catch {}
-	}
 })();
