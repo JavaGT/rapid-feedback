@@ -122,6 +122,76 @@ module.exports = async function run() {
 				&& Math.abs(outline.w - (box.rect.w + 8)) <= 2 && Math.abs(outline.h - (box.rect.h + 8)) <= 2,
 			JSON.stringify({ target: box.rect, outline }));
 
+		// --- C: a backdrop rule that judges the press by geometry, not by path ---
+		// ui-sdk's `pressedBackdrop` is `target === el && point outside el's rect`.
+		// Section A only modelled the "path misses the layer" form, so prepending
+		// the layer itself satisfied A and still fired this one: our editor sits
+		// outside the dialog's box, so the press read as a backdrop click and
+		// dismissed the palette. The fake path must not present the layer as its
+		// first node.
+		await page.reload();
+		await page.evaluate(() => { window.__RF_TEST_MODE__ = true; });
+		await page.evaluate(SCRIPT);
+		await page.evaluate(() => {
+			const dlg = document.createElement('div');
+			dlg.id = 'rf-palette';
+			dlg.setAttribute('popover', 'manual');
+			// Narrow on purpose: the popover is ~380px wide, so a press on its
+			// textarea centre lands outside this box in x. That is the shape that
+			// exposes the bug — the reported palette is 520px wide and its editor
+			// opened to the left of it.
+			dlg.style.cssText = 'position:fixed;top:100px;left:300px;width:120px;height:200px;margin:0;padding:0;border:1px solid #999';
+			dlg.innerHTML = '<h2 id="rf-pal-child" style="width:110px;height:20px">Palette</h2>';
+			document.body.appendChild(dlg);
+			dlg.showPopover();
+			window.__rfBackdropCloses = 0;
+			// ui-sdk's shape (foundation/popups/popup.js): `contains` is false when
+			// the press is reported ON the layer at a point outside its own box, and
+			// a layer whose `contains` is false is dismissed as an outside press.
+			const outsideBox = (p, r) => p.x < r.left || p.x > r.right || p.y < r.top || p.y > r.bottom;
+			addEventListener('pointerdown', (e) => {
+				const target = e.composedPath()[0];
+				const pressedBackdrop = target === dlg && 'clientX' in e
+					&& outsideBox({ x: e.clientX, y: e.clientY }, dlg.getBoundingClientRect());
+				const inside = (target && dlg.contains(target)) && !pressedBackdrop;
+				if (!inside && dlg.matches(':popover-open')) {
+					dlg.hidePopover();
+					window.__rfBackdropCloses++;
+				}
+			}, { capture: true });
+		});
+		await page.keyboard.down('Alt');
+		chordKey = await chordModifier(page);
+		await page.keyboard.down(chordKey);
+		await chordClick('#rf-pal-child');
+		await page.keyboard.up(chordKey);
+		await page.keyboard.up('Alt');
+		await waitForPopover(page);
+		const ta2 = await page.evaluate(`(() => {
+			const p = ${POP}; const r = p.querySelector('.rf-popover-ta').getBoundingClientRect();
+			return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+		})()`);
+		await page.mouse.click(ta2.x, ta2.y);
+		await delay(200);
+		const backdropState = await page.evaluate(`(() => ({
+			open: document.getElementById('rf-palette').matches(':popover-open'),
+			closes: window.__rfBackdropCloses,
+			editor: !!(${POP}),
+		}))()`);
+		check('a click in the editor is not read as a backdrop press',
+			backdropState.open && backdropState.closes === 0, JSON.stringify(backdropState));
+		// And a genuine press on the backdrop (the layer itself, outside its box)
+		// must still dismiss it — the fix must not make the layer immune.
+		await page.mouse.click(60, 700);
+		await delay(200);
+		const afterBackdrop = await page.evaluate(`(() => ({
+			open: document.getElementById('rf-palette').matches(':popover-open'),
+			closes: window.__rfBackdropCloses,
+			editor: !!(${POP}),
+		}))()`);
+		check('a real backdrop press still dismisses the layer',
+			!afterBackdrop.open && afterBackdrop.closes === 1, JSON.stringify(afterBackdrop));
+
 		return finish();
 	});
 };

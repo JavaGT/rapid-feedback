@@ -1,7 +1,8 @@
 // ==UserScript==
 // @name         Rapid Feedback
 // @namespace    javagrant.ac.nz
-// @version      5.28
+// @version      5.29
+// @note         v5.29: a press in the feedback editor is no longer read as a backdrop press by ui-sdk-style surfaces (Command palette), which used to dismiss them; genuine clicks away still do
 // @note         v5.28: no first-run popup — loading a page shows nothing until the chord is held or the panel is opened; the panel's ? button still carries the gesture reminder
 // @note         v5.27: pinch-zoom safe outlines, markers and popover — a fixed-at-origin probe measures Safari's visual-viewport gap so BCR-derived overlay coordinates land on their targets instead of drifting
 // @note         v5.26: the chord outline re-raises itself when its target is inside a page popover/menu, so the ring stays visible above SDK menus even where the popover's toggle event never reaches the tool (Safari)
@@ -173,6 +174,19 @@
 			.filter(el => !isOwnChrome(el));
 		return layers[layers.length - 1] || null;
 	}
+	// A page's outside-press rule comes in two forms, and the fake path has to
+	// satisfy both at once:
+	//   1. "the composed path never crosses the layer" — needs the layer present;
+	//   2. "the press landed on the layer itself, outside its box" — ui-sdk's
+	//      `pressedBackdrop` (target === el && point outside el's rect).
+	// Prepending the layer alone satisfies (1) and *fires* (2): our editor always
+	// sits outside a dialog's rect, so the press reads as a backdrop click and
+	// dismisses the very surface we meant to stay in. Presenting a child of the
+	// layer first keeps (1) true while leaving path[0] something other than the
+	// layer, so a backdrop rule cannot mistake our press for one.
+	function pressProxyFor(layer) {
+		return layer?.firstElementChild || layer;
+	}
 	for (const type of HIJACK_TYPES) {
 		addEventListener(type, (e) => {
 			if (!e.composed || typeof e.composedPath !== 'function') return;
@@ -181,11 +195,13 @@
 			if (!path.some(n => n && n.nodeType === 1 && isOwnChrome(n))) return;
 			const layer = pageTopLayer();
 			if (!layer || path.includes(layer)) return;
+			const proxy = pressProxyFor(layer);
+			const prefix = proxy === layer ? [layer] : [proxy, layer];
 			const original = e.composedPath.bind(e);
 			try {
 				Object.defineProperty(e, 'composedPath', {
 					configurable: true,
-					value: () => [layer, ...original()],
+					value: () => [...prefix, ...original()],
 				});
 			} catch { /* a locked-down event can't be annotated; leave it alone */ }
 		}, { capture: true });
